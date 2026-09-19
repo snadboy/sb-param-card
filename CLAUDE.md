@@ -47,3 +47,11 @@ security boundary, since substitution splices text into templates HA executes.
       Zoom preservation across setConfig therefore has the best possible shape, but was NOT
       isolated as a test (demo uses auto_fit: true, which refits deliberately when switching
       lines); if a user wants sticky zoom, turn auto_fit off and re-check.
+- [x] v0.2.0 DYNAMIC CHOICES: `items_source: entity` + source_entity/source_attribute — a dict
+      attribute contributes its KEYS (sensor.metra_schedule -> lines = the 11 Metra lines), a
+      list its entries, a list of objects its label/value fields. Resolved SYNCHRONOUSLY from
+      hass (no async gap = allowlist never momentarily empty, default always honoured).
+      Same resolver duplicated in sb-nav-select v0.5.0 (keep the two copies identical).
+      Verified: demo now carries zero hand-typed lines; dropdown + both allowlists all show 11
+      from live state; a hostile link (?...={{ states }}) is REJECTED by the allowlist and the
+      cards fall back to the default — the security property holds with dynamic choices too.
