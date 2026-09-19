@@ -12,7 +12,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const fire = (node, type, detail) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
@@ -42,6 +42,37 @@ const substitute = (node, name, value) => {
     return out;
   }
   return node;
+};
+
+
+// ---- choices from live state -------------------------------------------
+// Keeps the allowlist in step with reality: a dict attribute
+// (sensor.metra_schedule -> lines) yields its keys, a list yields its
+// entries, a list of objects yields label/value fields. Resolved
+// synchronously from hass so the allowlist is never momentarily empty.
+const resolveItems = (hass, config) => {
+  if (config.items_source !== "entity") return config.items || [];
+  const st = hass?.states?.[config.source_entity];
+  const raw = st?.attributes?.[config.source_attribute];
+  let out = [];
+  if (Array.isArray(raw)) {
+    out = raw.map((item) => {
+      if (item && typeof item === "object") {
+        const value = config.source_value_field ? item[config.source_value_field]
+          : item.value ?? item.id ?? item.name;
+        const label = config.source_label_field ? item[config.source_label_field]
+          : item.label ?? item.name ?? value;
+        return { label: String(label ?? ""), value: String(value ?? "") };
+      }
+      return { label: String(item), value: String(item) };
+    });
+  } else if (raw && typeof raw === "object") {
+    out = Object.keys(raw).map((k) => ({ label: k, value: k }));
+  }
+  out = out.filter((i) => i.value !== "");
+  if (config.source_sort !== false)
+    out.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  return out;
 };
 
 class SbParamCard extends HTMLElement {
@@ -96,7 +127,7 @@ class SbParamCard extends HTMLElement {
   }
 
   _choices() {
-    return (this._config.items || []).map((i) => String(i?.value ?? ""));
+    return resolveItems(this._hass, this._config).map((i) => String(i?.value ?? ""));
   }
 
   // ALLOWLIST: a URL value is honoured only when it is one of the configured
@@ -209,8 +240,26 @@ class SbParamCardEditor extends HTMLElement {
     return el;
   }
 
+  _renderDynamicPreview() {
+    const items = resolveItems(this._hass, this._config);
+    this._wrap.innerHTML = "";
+    this._rows = null;
+    const box = document.createElement("div");
+    box.style.cssText =
+      "padding:10px 12px; border:1px dashed var(--divider-color); border-radius:8px; color:var(--secondary-text-color); font-size:.85em;";
+    box.textContent = items.length
+      ? `${items.length} choice${items.length === 1 ? "" : "s"}: ` +
+        items.slice(0, 12).map((i) => i.label).join(", ") + (items.length > 12 ? "…" : "")
+      : "No choices yet — pick an entity and an attribute that holds a list or a dictionary.";
+    this._wrap.appendChild(box);
+  }
+
   // Rows rebuild only on add/delete so typing never loses focus.
   _renderItems() {
+    if (this._config.items_source === "entity") {
+      this._renderDynamicPreview();
+      return;
+    }
     const items = this._config.items || [];
     if (this._rows && this._rows.length === items.length) return;
     this._wrap.innerHTML = "";
@@ -307,19 +356,57 @@ class SbParamCardEditor extends HTMLElement {
     }
   }
 
+  _dynamicSchema() {
+    const st = this._hass?.states?.[this._config.source_entity];
+    const attrs = Object.keys(st?.attributes || {}).filter(
+      (k) => !["friendly_name", "icon", "device_class", "unit_of_measurement", "state_class"].includes(k)
+    );
+    const raw = st?.attributes?.[this._config.source_attribute];
+    const objFields =
+      Array.isArray(raw) && raw[0] && typeof raw[0] === "object" ? Object.keys(raw[0]) : [];
+    const fieldSel = (name) => ({
+      name,
+      selector: { select: { mode: "dropdown", options: objFields.map((f) => ({ value: f, label: f })) } },
+    });
+    return [
+      { name: "source_entity", selector: { entity: {} } },
+      {
+        name: "source_attribute",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: attrs.length
+              ? attrs.map((a) => ({ value: a, label: a }))
+              : [{ value: this._config.source_attribute || "", label: "(pick an entity first)" }],
+          },
+        },
+      },
+      ...(objFields.length ? [fieldSel("source_label_field"), fieldSel("source_value_field")] : []),
+    ];
+  }
+
   _render() {
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (s) =>
-        ({ parameter: "Parameter name", default: "Default choice" }[s.name] || s.name);
+        ({ parameter: "Parameter name", default: "Default choice", items_source: "Choices",
+           source_entity: "Entity", source_attribute: "Attribute",
+           source_label_field: "Label field", source_value_field: "Value field" }[s.name] || s.name);
       this._form.computeHelper = (s) =>
         ({
           parameter: "Write $name$ anywhere in the card below — including inside a template — and it is replaced by the chosen value. Transforms: $name:slug$, $name:lower$, $name:upper$, $name:title$.",
           default: "Used until a choice is made (or when a link carries an unknown value).",
+          source_attribute: "An attribute holding a list or a dictionary \u2014 a dictionary contributes its keys.",
         }[s.name]);
       this._form.addEventListener("value-changed", (e) => {
+        const sourceChanged =
+          e.detail.value.items_source !== this._config.items_source ||
+          e.detail.value.source_entity !== this._config.source_entity ||
+          e.detail.value.source_attribute !== this._config.source_attribute;
         this._config = { ...this._config, ...e.detail.value };
+        if (sourceChanged) this._rows = null;
         this._emit();
+        this._render();
       });
       this.appendChild(this._form);
 
@@ -346,18 +433,31 @@ class SbParamCardEditor extends HTMLElement {
     this._form.schema = [
       { name: "parameter", selector: { text: {} } },
       {
+        name: "items_source",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "static", label: "Typed in below" },
+              { value: "entity", label: "From an entity attribute" },
+            ],
+          },
+        },
+      },
+      ...(this._config.items_source === "entity" ? this._dynamicSchema() : []),
+      {
         name: "default",
         selector: {
           select: {
             mode: "dropdown",
-            options: (this._config.items || [])
+            options: resolveItems(this._hass, this._config)
               .filter((i) => i?.value)
               .map((i) => ({ value: String(i.value), label: i.label || String(i.value) })),
           },
         },
       },
     ];
-    this._form.data = this._config;
+    this._form.data = { items_source: "static", ...this._config };
     this._renderItems();
     this._renderCardEditor();
   }

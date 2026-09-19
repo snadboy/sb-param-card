@@ -47,7 +47,9 @@ arbitrary text never reaches a template that Home Assistant executes.
 | Option | Meaning |
 |---|---|
 | `parameter` | The name used in `$name$` (default `value`) |
-| `items` | The choices: `label` + `value` per row |
+| `items` | The choices: `label` + `value` per row (static mode) |
+| `items_source` | `static` (default) or `entity` — choices from live state |
+| `source_entity` / `source_attribute` | Where dynamic choices come from: a dict attribute contributes its keys, a list its entries |
 | `default` | Choice used before one is made |
 | `card` | The wrapped card config |
 | `storage_id` | URL key (`seb-<storage_id>`), auto-generated |
