@@ -29,4 +29,12 @@ security boundary, since substitution splices text into templates HA executes.
 
 ## Status
 
-- [ ] v0.1.0 initial
+- [x] v0.1.0 released + installed via HACS (repo id 1377138869). Demo: card-lab section 4 —
+      one sb-nav-select (target lab-metra-line) + two sb-param-cards wrapping the Metra
+      timetable markdown with '$line$'. Verified headless: UP-W→BNSF→ME re-renders real
+      timetables (UP-W Saturday 1325 chars, BNSF Modified 2107, ME Saturday 5745), child stays
+      HUI-MARKDOWN-CARD (setConfig in place, no rebuild), zero page errors.
+      Probe gotcha: markdown output lives in ha-markdown's SHADOW root — textContent on the
+      wrapper returns "" and looks like a failure; walk the shadow roots.
+- Collapses the 11 per-line clones the user maintained by hand (tables view). Maps are the
+  next target — the open question is whether hui-map-card keeps its zoom across setConfig.
