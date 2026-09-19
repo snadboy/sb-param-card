@@ -52,6 +52,41 @@ security boundary, since substitution splices text into templates HA executes.
       list its entries, a list of objects its label/value fields. Resolved SYNCHRONOUSLY from
       hass (no async gap = allowlist never momentarily empty, default always honoured).
       Same resolver duplicated in sb-nav-select v0.5.0 (keep the two copies identical).
-      Verified: demo now carries zero hand-typed lines; dropdown + both allowlists all show 11
-      from live state; a hostile link (?...={{ states }}) is REJECTED by the allowlist and the
-      cards fall back to the default — the security property holds with dynamic choices too.
+      Verified: dropdown + both allowlists show 11 from live state; a hostile link
+      (?...={{ states }}) is REJECTED by the allowlist and the cards fall back to the default —
+      the security property holds with dynamic choices too.
+      CORRECTION 2026-09-19: an earlier note here claimed the card-lab demo carried zero
+      hand-typed lines. It does not — the SAVED card-lab config still uses static `items`.
+      card-lab is GUI-owned; that edit never landed. The dynamic form is live on the REAL
+      views (below), which is what matters.
+
+## Production conversion (2026-09-19)
+
+The real `/dashboard-monitor/metra-tables` and `/dashboard-monitor/metra-maps` views each
+carried **11 hand-cloned Bubble pop-ups** (a button grid + one pop-up per line). Proved
+they were mechanical clones — normalising `'BNSF'` -> `'$line$'` and `metra_bnsf` ->
+`metra_$line:slug$` makes all 11 byte-identical in both views — then replaced each set with
+one `sb-nav-select` + param cards.
+
+- tables: 7 param cards (the 6 markdown macro samples + the data-macro card), headings pass
+  through unchanged (they carry no line name). 97,795 -> 16,303 chars.
+- maps: 2 param cards (per-line map + active-trains list); the all-lines map is untouched.
+  11,358 -> 2,423 chars. Whole dashboard 321,267 -> 240,936 bytes.
+- Distinct storage_ids per view (`metra-tables-line` / `metra-maps-line`) so the two
+  dropdowns don't cross-talk; both default to UP-W.
+- Verified headless: 7/2 param cards mount, zero bubble-cards remain, content genuinely
+  differs per line (MD-N renders Fox Lake<->Union Station), no unsubstituted tokens, and a
+  hostile URL value still falls back to UP-W.
+
+### Gotchas from the conversion
+
+- **`python_transform` in ha-mcp is an AST-restricted sandbox**: no `import`, no `assert`
+  (`raise` untested). Rely on `config_hash` as the structural guard instead — it pins the
+  config to exactly what you inspected. Plain string `.replace` beat needing `re` anyway,
+  because the line name only ever appears quoted (`'BNSF'`) in the Jinja.
+- **Check `max_columns`/`column_span` before rebuilding a section.** These views are
+  `max_columns: 2` with `column_span: 2`; copying card-lab's `4` would have silently
+  changed the layout.
+- **The user edits these dashboards in the GUI concurrently.** A mid-task `config_hash`
+  conflict turned out to be them resizing a Card Lab card. `python_transform` edits the
+  live config server-side, so surgical edits preserve such changes — re-read, don't force.
