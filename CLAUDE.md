@@ -36,5 +36,14 @@ security boundary, since substitution splices text into templates HA executes.
       HUI-MARKDOWN-CARD (setConfig in place, no rebuild), zero page errors.
       Probe gotcha: markdown output lives in ha-markdown's SHADOW root — textContent on the
       wrapper returns "" and looks like a failure; walk the shadow roots.
-- Collapses the 11 per-line clones the user maintained by hand (tables view). Maps are the
-  next target — the open question is whether hui-map-card keeps its zoom across setConfig.
+- Collapses the 11 per-line clones the user maintained by hand (tables + maps views).
+- [x] MAP VERIFIED 2026-09-19: one sb-param-card wrapping `type: map` with
+      `geo_location_sources: [metra_$line:slug$]`, sharing storage_id `lab-metra-line` with the
+      timetable cards — ONE dropdown drives name-form ('UP-W' in the macro) and slug-form
+      ('metra_up_w' in the map source) simultaneously, which is what the :slug transform exists
+      for. hui-map-card is REUSED across switches (same element identity, `setConfig` path —
+      no rebuild), sources update, engine markers render (BNSF train near Westmont, Leaflet
+      path since headless has no WebGL2). Zero page errors.
+      Zoom preservation across setConfig therefore has the best possible shape, but was NOT
+      isolated as a test (demo uses auto_fit: true, which refits deliberately when switching
+      lines); if a user wants sticky zoom, turn auto_fit off and re-check.
