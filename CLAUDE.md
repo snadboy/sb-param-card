@@ -118,13 +118,14 @@ Probe gotcha that cost an hour: `deep(el, sel)` must start from
 
 The choice list is gone from this card. The allowlist comes from the knob
 (SB Filter Select) sharing this key via `window.__sbKnobs`; the card
-re-evaluates on `sb-knob-changed`. `_choices()` = knob values, then any
-legacy typed/entity choices (pre-0.3.0 configs still work; the editor offers
-"Remove the copy"), then `default`. With no knob, only the default is used.
+re-evaluates on `sb-knob-changed`. `_choices()` = knob values, then `default`.
+(v0.3.1: the pre-0.3.0 fallback for a list typed into this card, and the
+editor's "Remove the copy" link, were deleted — user: the cards are too new
+to carry legacy paths. `resolveItems` went with it.) With no knob, only the default is used.
 `show_value` renders a one-line header (parameter: label ✕); a rejected URL
 value says so instead of showing an empty label. The editor is parameter /
 default (a dropdown of the knob's choices when a knob is on the page, else
-text) / show_value / card. `resolveItems` stays for the legacy path.
+text) / show_value / card.
 
 The Metra views' seven table sockets and two map sockets lost their nine
 duplicate lists; card-lab's three browsers are now wrapped sockets with

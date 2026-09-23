@@ -10,11 +10,11 @@
  * choices the knob sharing this key publishes (window.__sbKnobs), so a link
  * someone sends you can only select a value the knob offers — never splice
  * arbitrary text into a template Home Assistant will execute. With no knob
- * on the page only `default` is ever used.
+ * on the page only `default` is ever used. There is no choice list here.
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 // The knob registry SB Filter Select fills (key -> {items, el}); see there.
 const KNOBS = (window.__sbKnobs = window.__sbKnobs || new Map());
 // Card types whose element is re-configured in place on a value change
@@ -54,36 +54,6 @@ const substitute = (node, name, value) => {
   return node;
 };
 
-
-// ---- choices from live state -------------------------------------------
-// Keeps the allowlist in step with reality: a dict attribute
-// (sensor.metra_schedule -> lines) yields its keys, a list yields its
-// entries, a list of objects yields label/value fields. Resolved
-// synchronously from hass so the allowlist is never momentarily empty.
-const resolveItems = (hass, config) => {
-  if (config.items_source !== "entity") return config.items || [];
-  const st = hass?.states?.[config.source_entity];
-  const raw = st?.attributes?.[config.source_attribute];
-  let out = [];
-  if (Array.isArray(raw)) {
-    out = raw.map((item) => {
-      if (item && typeof item === "object") {
-        const value = config.source_value_field ? item[config.source_value_field]
-          : item.value ?? item.id ?? item.name;
-        const label = config.source_label_field ? item[config.source_label_field]
-          : item.label ?? item.name ?? value;
-        return { label: String(label ?? ""), value: String(value ?? "") };
-      }
-      return { label: String(item), value: String(item) };
-    });
-  } else if (raw && typeof raw === "object") {
-    out = Object.keys(raw).map((k) => ({ label: k, value: k }));
-  }
-  out = out.filter((i) => i.value !== "");
-  if (config.source_sort !== false)
-    out.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
-  return out;
-};
 
 class SbParamCard extends HTMLElement {
   static getConfigElement() {
@@ -143,21 +113,17 @@ class SbParamCard extends HTMLElement {
     return KNOBS.get(`seb-${this._config?.storage_id || ""}`);
   }
 
-  // The allowlist: the knob's choices first, then any choices still typed
-  // into this card (legacy, pre-0.3.0), then the default. Ordered, unique.
+  // The allowlist: the knob's choices, then the default. Ordered, unique.
   _choices() {
-    const knob = this._knob();
     const out = [];
     const push = (v) => { const s = String(v ?? ""); if (!out.includes(s)) out.push(s); };
-    for (const i of knob?.items || []) push(i.value);
-    for (const i of resolveItems(this._hass, this._config)) push(i?.value);
+    for (const i of this._knob()?.items || []) push(i.value);
     if (this._config.default != null) push(this._config.default);
     return out;
   }
 
   _labelFor(value) {
-    const all = [...(this._knob()?.items || []), ...resolveItems(this._hass, this._config)];
-    return all.find((i) => String(i.value ?? "") === value)?.label || value;
+    return (this._knob()?.items || []).find((i) => String(i.value ?? "") === value)?.label || value;
   }
 
   // Optional header: the current value and a ✕ that clears it from the URL.
@@ -361,8 +327,6 @@ class SbParamCardEditor extends HTMLElement {
       });
       this.appendChild(this._form);
 
-      this._wrap = document.createElement("div");
-      this.appendChild(this._wrap);
       const hint = document.createElement("div");
       hint.innerHTML =
         "This card is a <b>socket</b>: it shows nothing of its own. Add an <b>SB Filter Select</b> (the knob) on this view and point it here — its choices are the only values ever accepted from a link. Without a knob, only the default is used.";
@@ -381,7 +345,6 @@ class SbParamCardEditor extends HTMLElement {
     // on the page, otherwise free text (the knob may not be placed yet).
     const knob = KNOBS.get(`seb-${this._config.storage_id || ""}`);
     const knobChoices = (knob?.items || []).filter((i) => i.value !== "");
-    const hasLegacy = (this._config.items || []).length || this._config.items_source === "entity";
     this._form.schema = [
       { name: "parameter", selector: { text: {} } },
       knobChoices.length
@@ -391,21 +354,6 @@ class SbParamCardEditor extends HTMLElement {
       { name: "show_value", selector: { boolean: {} } },
     ];
     this._form.data = { show_value: false, ...this._config };
-    // Legacy (pre-0.3.0) choices typed into this card: still honoured, but the
-    // knob supplies them now — offer to drop the copy.
-    this._wrap.innerHTML = "";
-    if (hasLegacy) {
-      const box = document.createElement("div");
-      box.style.cssText = "padding:10px 12px; border:1px dashed var(--divider-color); border-radius:8px; color:var(--secondary-text-color); font-size:.85em;";
-      box.innerHTML = `This card still carries its own choice list (from before 0.3.0). The Filter Select sharing this key supplies the choices now, so the copy is redundant. <span class="drop" style="cursor:pointer; color:var(--primary-color);">Remove the copy</span>`;
-      box.querySelector(".drop").addEventListener("click", () => {
-        const { items, items_source, source_entity, source_attribute, source_label_field, source_value_field, source_sort, ...rest } = this._config;
-        this._config = rest;
-        this._emit();
-        this._render();
-      });
-      this._wrap.appendChild(box);
-    }
     this._renderCardEditor();
   }
 }
