@@ -1,29 +1,23 @@
 # SB Param Card
 
-A Home Assistant dashboard card that gives **any card a runtime parameter** —
-**the socket**.
+A Home Assistant dashboard card that gives **any card a runtime parameter** — and the dropdown that sets it.
 
-Wrap a card and write `$name$` wherever the value belongs — inside a Jinja
-template, an entity id, a map's `geo_location_sources`, an Entity Browser's
-`filter`, a title. The value comes from the URL (`?seb-<storage_id>=…`),
-which an [SB Filter Select](https://github.com/snadboy/sb-nav-select) — the
-knob — writes, so **one card plus one dropdown replaces N near-identical
-cards**. This card has no UI of its own (optionally a one-line header showing
-the current value with a ✕).
+## One card, two switches
 
-## The three SB cards — one wire, three roles
+**SB Param Card** is a runtime parameter shared through the page URL
+(`?seb-<key>=value`). Cards that share a **key** (`storage_id`) share the
+value; each card is one or both of:
 
-| Card | Role | URL |
+| Switch | The card is… | What it does |
 |---|---|---|
-| **SB Filter Select** (`sb-nav-select`) | the **knob** — the only card that offers a choice; renders nothing else | **writes** `?seb-<target>=value` |
-| **SB Param Card** (`sb-param-card`) | the **socket** — the only card that reads a value; wraps any card and substitutes `$parameter$` into it | **reads** `seb-<storage_id>` |
-| **SB Entity Browser** (`sb-entity-browser`) | just a card — wrapped in a socket like a map or a markdown card would be | — |
+| **Show a dropdown** (`show_selector`) | the **knob** | carries the choices, draws the dropdown, **writes** the URL, publishes its choices for the sockets |
+| **Wrap a card** (`card`) | a **socket** | substitutes `$parameter$` into the wrapped card — an entity id, a Jinja template, a map source, an Entity Browser's `filter` |
 
-A knob and a socket are wired by sharing a key (`target` on the knob =
-`storage_id` on the socket). The socket accepts from the URL only the values
-the knob offers, so the knob's list is the single source of truth; a link
-carrying anything else falls back to the socket's `default`. One knob can
-drive many sockets; two knobs on a view use two keys.
+A knob with no card is a bare dropdown; a knob with a card drives that card
+directly; a socket with no dropdown is silent and takes its choices from the
+knob on the view. A socket accepts from the URL only what the knob offers
+(plus its `default`) — one list, one source of truth, and a link someone
+sends you can never splice arbitrary text into a template.
 
 ## Why
 
@@ -49,28 +43,27 @@ geo_location_sources: [metra_$line:slug$]
 `:slug` follows Home Assistant's entity-id convention, so one choice can feed
 both a friendly name and an entity/source id.
 
-## Safety
-
-The value taken from the URL is **allowlisted against the choices the knob
-sharing this key publishes** (plus the `default`). A link someone sends you
-can only select a value the knob offers — arbitrary text never reaches a
-template that Home Assistant executes. With no knob on the view, only the
-default is ever used. (Choices typed into this card before 0.3.0 are still
-honoured; the editor offers to remove the redundant copy.)
-
 ## Options
 
 | Option | Meaning |
 |---|---|
+| `storage_id` | The **key**: cards sharing it share the value (URL `seb-<key>`). Auto-generated; copy it to the other cards |
 | `parameter` | The name used in `$name$` (default `value`) |
-| `default` | Value used before a choice is made, when a link carries a value the knob does not offer, or with no knob on the view |
-| `show_value` | Show a one-line header with the current value and a ✕ that clears it (default off) |
-| `card` | The wrapped card config |
-| `storage_id` | URL key (`seb-<storage_id>`), auto-generated; the knob's `target` must match |
+| `show_selector` | This card draws the dropdown — it is the knob |
+| `title` / `placeholder` | Dropdown label and its "nothing chosen" text (knob) |
+| `choices` | The knob's choices: `label` + `value` per row |
+| `choices_source` | `static` (default) or `entity` — choices read live from an entity attribute (`source_entity` / `source_attribute`; a dictionary contributes its keys, a list its entries) |
+| `all_label` | Optional first choice that clears the value, e.g. "All lines" |
+| `default` | Value used before a choice is made, or when a link carries a value the knob does not offer. With no default the parameter is empty |
+| `card` | The wrapped card config (any card; `$name$` anywhere in it) |
+| `show_value` | Socket only: a one-line header with the current value and a ✕ that clears it |
+
 
 On a value change the wrapped card is rebuilt (HA cards are not built to be
 reconfigured twice; the calendar card, for one, stops fetching). A `map` is
 reconfigured in place instead so its zoom survives.
+
+To navigate between views, see [SB Nav Select](https://github.com/snadboy/sb-nav-select); a destination such as `/dashboard/view?seb-line=BNSF` lands on a view with its parameter preset.
 
 ## Installation (HACS)
 

@@ -132,3 +132,23 @@ duplicate lists; card-lab's three browsers are now wrapped sockets with
 `filter: $q$`. Verified headless (`knob_socket_test.js`): choices 11 from the
 knob on Metra, wrapped browsers filter 275→13 rows, ✕ clears, an un-offered
 URL value falls back to default, no page errors.
+
+## v0.4.0 — one card, two switches (2026-09-23)
+
+The user kept asking why two cards existed for one parameter. Answer: they
+did not need to. Filter Select's filter mode moved in here as
+`show_selector`: a Param Card with the dropdown on is the KNOB (carries
+`choices` / `choices_source`, draws the `<select>`, writes the URL,
+publishes to `window.__sbKnobs` + `sb-knob-changed`); a Param Card with a
+`card` is a SOCKET; a card can be both. `sb-nav-select` is a pure
+navigation menu again. Rules: `_value()` = URL value if the knob offers it,
+else `default`, else "" (NOT the first choice — the knob and every socket
+must agree). The knob's dropdown shows the placeholder until a choice is
+made unless a default is set. Rendering is light DOM in this order:
+`<style>`, `ha-card.sbp-knob` (selector), `.sbp-bar` (socket-only value
+header), the child. Editor: parameter, key, show_selector → (title,
+placeholder, choices…), default (dropdown of the choices when known), card
+picker with "No card (dropdown only)". Views migrated by
+`merge_knobs.py` (scratchpad): Metra tables/maps, card-lab, demo. Verified
+headless (`onecard_test.js`): real `<select>` pick → URL → 3 sockets
+rebuild; 7/7 Metra tables follow the knob; no page errors.
