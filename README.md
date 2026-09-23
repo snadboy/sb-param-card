@@ -63,7 +63,7 @@ On a value change the wrapped card is rebuilt (HA cards are not built to be
 reconfigured twice; the calendar card, for one, stops fetching). A `map` is
 reconfigured in place instead so its zoom survives.
 
-To navigate between views, see [SB Nav Select](https://github.com/snadboy/sb-nav-select); a destination such as `/dashboard/view?seb-line=BNSF` lands on a view with its parameter preset.
+A link or a `navigate` action to `/dashboard/view?seb-line=BNSF` lands on a view with its parameter preset — handy for buttons that jump straight to one line.
 
 ## Installation (HACS)
 
