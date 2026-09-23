@@ -54,6 +54,10 @@ arbitrary text never reaches a template that Home Assistant executes.
 | `card` | The wrapped card config |
 | `storage_id` | URL key (`seb-<storage_id>`), auto-generated |
 
+On a value change the wrapped card is rebuilt (HA cards are not built to be
+reconfigured twice; the calendar card, for one, stops fetching). A `map` is
+reconfigured in place instead so its zoom survives.
+
 ## Installation (HACS)
 
 HACS → custom repositories → `snadboy/sb-param-card`, category **Dashboard**.

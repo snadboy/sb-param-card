@@ -12,7 +12,11 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
+// Card types whose element is re-configured in place on a value change
+// instead of rebuilt (see _update). Add a type only after checking that its
+// setConfig really is idempotent.
+const REUSE_IN_PLACE = new Set(["map"]);
 
 const fire = (node, type, detail) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
@@ -161,9 +165,12 @@ class SbParamCard extends HTMLElement {
     this._lastValue = value;
     const cfg = substitute(this._config.card, this._config.parameter, value);
 
-    // Same card type? Re-configure in place — rebuilding would reset a
-    // child's own view state (a map's zoom, a scrolled list).
-    if (this._child && this._childType === cfg.type) {
+    // Same card type? Only a few cards are re-configured IN PLACE, to keep
+    // their view state (a map's zoom). Everything else is rebuilt: HA's own
+    // hui-card never calls setConfig twice on an element, so a second
+    // setConfig is an untested path in every card — the calendar card, for
+    // one, sits on its spinner for a long and variable time after it.
+    if (this._child && this._childType === cfg.type && REUSE_IN_PLACE.has(cfg.type)) {
       try {
         this._child.setConfig(cfg);
         this._child.hass = this._hass;

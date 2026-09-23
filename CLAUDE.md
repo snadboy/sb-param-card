@@ -18,8 +18,9 @@ security boundary, since substitution splices text into templates HA executes.
 - Substitution is CLIENT-SIDE into the child's config, so it needs no
   `render_template` variables and works on non-template fields too.
 - Child built via `window.loadCardHelpers().createCardElement()`. On a value
-  change with the SAME card type we call `setConfig` in place rather than
-  rebuilding — rebuilding resets child view state (map zoom, scroll position).
+  change the child is REBUILT, except for types in `REUSE_IN_PLACE` (`map`),
+  which get `setConfig` in place to keep their view state (zoom). See
+  "In-place setConfig is an untested path" below for why the default flipped.
 - `this._sbFilterTarget = {id, title}` marks the card for SB Filter Select's
   generic target discovery.
 - Editor embeds HA's own `hui-card-picker` / `hui-card-element-editor`; both
@@ -90,3 +91,25 @@ one `sb-nav-select` + param cards.
 - **The user edits these dashboards in the GUI concurrently.** A mid-task `config_hash`
   conflict turned out to be them resizing a Card Lab card. `python_transform` edits the
   live config server-side, so surgical edits preserve such changes — re-read, don't force.
+
+
+## In-place setConfig is an untested path in every HA card (v0.2.1, 2026-09-22)
+
+v0.2.0 reconfigured a same-type child in place on a value change, to keep a
+map's zoom. Wrapping HA's **calendar card** showed why that is wrong in
+general: after `setConfig` the card flips to `ha-full-calendar.loading` with
+a spinner and **never sends a new `calendar/event/subscribe`** — it
+subscribes when created, not when reconfigured — so it sits on the spinner
+until something unrelated makes it resubscribe (seen: ~14 s; the user saw
+"a long delay"). It looked random because a change fired *before* the
+card's first subscription happened to work. Measured with Playwright's own
+WS frame capture (HA coalesces messages into JSON arrays — parse both).
+
+HA's own `hui-card` never calls `setConfig` twice on an element; it
+rebuilds on any config change. So the card now rebuilds by default and
+reuses in place only for `REUSE_IN_PLACE = {"map"}`. Add a type there only
+after checking its `setConfig` really is idempotent.
+
+Probe gotcha that cost an hour: `deep(el, sel)` must start from
+`el.shadowRoot`, not `el` — a custom element's light DOM is empty, so every
+"no spinner / no grid" reading from a probe rooted at the element was blind.
