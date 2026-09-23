@@ -152,3 +152,36 @@ picker with "No card (dropdown only)". Views migrated by
 `merge_knobs.py` (scratchpad): Metra tables/maps, card-lab, demo. Verified
 headless (`onecard_test.js`): real `<select>` pick → URL → 3 sockets
 rebuild; 7/7 Metra tables follow the knob; no page errors.
+
+## v0.5.0 — the editor is an overview with dialogs (2026-09-23)
+
+User complaint: HA card editors are a wall of fields. The Param Card editor
+is now an OVERVIEW of three read-only groups — Parameter (key, name,
+default, "this card is knob / socket / both", "shared with N other cards"),
+Dropdown (choice count and source, label), Wrapped card (type, `$token$`
+usage count, unknown tokens flagged) — each with an Edit button opening one
+focused native `<dialog>` (`showModal()`, top layer, stacks over HA's own
+card-editor dialog from inside its shadow tree). Edits apply LIVE so HA's
+preview follows; a snapshot is taken on open; Cancel restores it; Done / ✕
+/ Escape keep. The Wrapped-card dialog embeds HA's `hui-card-element-editor`
+/ `hui-card-picker` as before.
+
+Two bugs found only by running it inside the real editor:
+- **HA's preview is a second knob.** Two knobs with one key ping-ponged
+  `sb-knob-changed` → `_publish` → announce until the stack overflowed. A
+  knob now only refreshes its own dropdown on that event, and `_publish`
+  yields when a live knob already publishes the same list.
+- **`_renderCardEditor` is async**; the dialog body could be rebuilt while
+  it awaited `loadHuiEditors()`, so it appended HA's editor into a detached
+  box. It now renders only into the box that is still on screen and never
+  reuses an editor that is not inside it.
+
+Headless harness (`editor_live_test.js` / `preview_probe.js`): enter edit
+mode with `hui-root.lovelace.setEditMode(true)`, open a card's editor with
+`hui-card-edit-mode._editCard()`; the preview card lives under
+`ha-dialog < hui-dialog-edit-card`; HA's dialogs are native `<dialog>`s
+too, so exclude ours with `closest("dialog.sped")`, not `closest("dialog")`.
+Verified: overview text, dialog `:modal`, live edit changes the preview
+only, Cancel restores, nested HA editor renders the Entity Browser editor.
+Not done: a wheel-over-backdrop scroll guard (the scheduler card has one).
+Next: multi-parameter, then the same shell for Entity Browser.

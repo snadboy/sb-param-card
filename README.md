@@ -43,6 +43,13 @@ geo_location_sources: [metra_$line:slug$]
 `:slug` follows Home Assistant's entity-id convention, so one choice can feed
 both a friendly name and an entity/source id.
 
+## Editing
+
+The editor shows three groups — **Parameter**, **Dropdown**, **Wrapped card** —
+as a read-only overview (what the card is, how many choices, which `$tokens$`
+the wrapped card actually uses), each with an *Edit* button that opens one
+focused dialog. Edits apply live to the preview; *Cancel* restores.
+
 ## Options
 
 | Option | Meaning |
