@@ -1,18 +1,22 @@
-/* SB Param Card — a runtime parameter for any card.
+/* SB Param Card — the SOCKET: a runtime parameter for any card.
  *
- * Wraps ANY card config and substitutes a card-local parameter into it
- * before the card is built: "$line$" in a markdown template, an entity id,
- * a map's geo_location_sources — anything. The value comes from the URL
- * (?seb-<storage_id>=…, what SB Filter Select writes), so one card plus one
- * dropdown replaces N near-identical cards. No helper entities.
+ * Wraps ANY card config and substitutes a parameter into it before the card
+ * is built: "$line$" in a markdown template, an entity id, a map's
+ * geo_location_sources, an Entity Browser's filter — anything. The value
+ * comes from the URL (?seb-<storage_id>=…), which SB Filter Select — the
+ * KNOB — writes. One knob drives every socket sharing its key.
  *
- * The URL value is ALLOWLISTED against the configured choices: a link
- * someone sends you can only select a value you configured, never splice
- * arbitrary text into a template Home Assistant will execute.
+ * This card has no UI of its own. The URL value is ALLOWLISTED against the
+ * choices the knob sharing this key publishes (window.__sbKnobs), so a link
+ * someone sends you can only select a value the knob offers — never splice
+ * arbitrary text into a template Home Assistant will execute. With no knob
+ * on the page only `default` is ever used.
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.2.1";
+const VERSION = "0.3.0";
+// The knob registry SB Filter Select fills (key -> {items, el}); see there.
+const KNOBS = (window.__sbKnobs = window.__sbKnobs || new Map());
 // Card types whose element is re-configured in place on a value change
 // instead of rebuilt (see _update). Add a type only after checking that its
 // setConfig really is idempotent.
@@ -20,6 +24,8 @@ const REUSE_IN_PLACE = new Set(["map"]);
 
 const fire = (node, type, detail) =>
   node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+const esc = (v) =>
+  String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // $name$ with optional :transform — matches the integration's slug rule for
 // :slug so "UP-W" lands as up_w wherever an entity/source id is needed.
@@ -88,14 +94,14 @@ class SbParamCard extends HTMLElement {
     return {
       parameter: "value",
       storage_id: "seb-" + Math.random().toString(36).slice(2, 8),
-      items: [{ label: "Example", value: "example" }],
+      default: "example",
       card: { type: "markdown", content: "Parameter is **$value$**" },
     };
   }
 
   setConfig(config) {
     if (!config) throw new Error("Invalid configuration");
-    this._config = { parameter: "value", items: [], ...config };
+    this._config = { parameter: "value", ...config };
     // Announce ourselves to SB Filter Select's target discovery.
     this._sbFilterTarget = {
       id: this._config.storage_id,
@@ -120,18 +126,68 @@ class SbParamCard extends HTMLElement {
 
   connectedCallback() {
     this._onNav = () => this._update();
+    this._onKnob = (e) => { if (e.detail?.key === `seb-${this._config?.storage_id || ""}`) this._update(); };
     window.addEventListener("location-changed", this._onNav);
     window.addEventListener("popstate", this._onNav);
+    window.addEventListener("sb-knob-changed", this._onKnob);
     this._update();
   }
 
   disconnectedCallback() {
     window.removeEventListener("location-changed", this._onNav);
     window.removeEventListener("popstate", this._onNav);
+    window.removeEventListener("sb-knob-changed", this._onKnob);
   }
 
+  _knob() {
+    return KNOBS.get(`seb-${this._config?.storage_id || ""}`);
+  }
+
+  // The allowlist: the knob's choices first, then any choices still typed
+  // into this card (legacy, pre-0.3.0), then the default. Ordered, unique.
   _choices() {
-    return resolveItems(this._hass, this._config).map((i) => String(i?.value ?? ""));
+    const knob = this._knob();
+    const out = [];
+    const push = (v) => { const s = String(v ?? ""); if (!out.includes(s)) out.push(s); };
+    for (const i of knob?.items || []) push(i.value);
+    for (const i of resolveItems(this._hass, this._config)) push(i?.value);
+    if (this._config.default != null) push(this._config.default);
+    return out;
+  }
+
+  _labelFor(value) {
+    const all = [...(this._knob()?.items || []), ...resolveItems(this._hass, this._config)];
+    return all.find((i) => String(i.value ?? "") === value)?.label || value;
+  }
+
+  // Optional header: the current value and a ✕ that clears it from the URL.
+  // Off by default — seven sockets on one view do not want seven headers.
+  _renderBar(value) {
+    const key = `seb-${this._config.storage_id || ""}`;
+    let live = null;
+    try { live = new URLSearchParams(location.search).get(key); } catch (e) { live = null; }
+    const want = !!this._config.show_value && live != null && live !== "";
+    let bar = this.querySelector(":scope > .sbp-bar");
+    if (!want) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "sbp-bar";
+      bar.style.cssText = "display:flex; align-items:center; gap:8px; padding:4px 12px 6px; font-size:.85em; color:var(--secondary-text-color);";
+      this.prepend(bar);
+    }
+    // A value the knob does not offer was rejected (default applies); say so
+    // rather than showing an empty label, and still offer the ✕.
+    const shown = live === value ? esc(this._labelFor(value))
+      : `<span style="color:var(--warning-color, orange)">“${esc(live)}” is not a choice — showing default</span>`;
+    bar.innerHTML = `<span>${esc(this._config.parameter)}: <b style="color:var(--primary-text-color)">${shown}</b></span>` +
+      `<span class="sbp-clear" title="Clear" style="cursor:pointer; color:var(--primary-color);">✕</span>`;
+    bar.querySelector(".sbp-clear").addEventListener("click", () => {
+      const params = new URLSearchParams(location.search);
+      params.delete(key);
+      const q = params.toString();
+      history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
+      fire(this, "location-changed", {});
+    });
   }
 
   // ALLOWLIST: a URL value is honoured only when it is one of the configured
@@ -158,6 +214,7 @@ class SbParamCard extends HTMLElement {
       return;
     }
     const value = this._value();
+    this._renderBar(value);
     if (this._child && value === this._lastValue) {
       this._child.hass = this._hass;
       return;
@@ -183,7 +240,8 @@ class SbParamCard extends HTMLElement {
       const helpers = await window.loadCardHelpers();
       const el = helpers.createCardElement(cfg);
       el.hass = this._hass;
-      this.innerHTML = "";
+      this._child?.remove();
+      this.querySelectorAll(":scope > ha-card").forEach((n) => n.remove());   // an earlier error card
       this.appendChild(el);
       this._child = el;
       this._childType = cfg.type;
@@ -209,7 +267,7 @@ const loadHuiEditors = async () => {
 
 class SbParamCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { parameter: "value", items: [], ...config };
+    this._config = { parameter: "value", ...config };
     if (!this._config.storage_id)
       this._config.storage_id = "seb-" + Math.random().toString(36).slice(2, 8);
     this._render();
@@ -230,84 +288,6 @@ class SbParamCardEditor extends HTMLElement {
 
   _emit() {
     fire(this, "config-changed", { config: this._config });
-  }
-
-  _input(value, placeholder, flex, onInput) {
-    const el = document.createElement("input");
-    el.type = "text";
-    el.value = value || "";
-    el.placeholder = placeholder;
-    el.autocomplete = "off";
-    el.style.cssText =
-      `flex:${flex}; min-width:0; box-sizing:border-box; font:inherit; color:var(--primary-text-color);` +
-      "background:var(--mdc-text-field-fill-color, rgba(127,127,127,.12));" +
-      "border:none; border-bottom:1px solid var(--divider-color);" +
-      "border-radius:4px 4px 0 0; padding:12px 10px; outline-color:var(--primary-color);";
-    el.addEventListener("input", onInput);
-    return el;
-  }
-
-  _renderDynamicPreview() {
-    const items = resolveItems(this._hass, this._config);
-    this._wrap.innerHTML = "";
-    this._rows = null;
-    const box = document.createElement("div");
-    box.style.cssText =
-      "padding:10px 12px; border:1px dashed var(--divider-color); border-radius:8px; color:var(--secondary-text-color); font-size:.85em;";
-    box.textContent = items.length
-      ? `${items.length} choice${items.length === 1 ? "" : "s"}: ` +
-        items.slice(0, 12).map((i) => i.label).join(", ") + (items.length > 12 ? "…" : "")
-      : "No choices yet — pick an entity and an attribute that holds a list or a dictionary.";
-    this._wrap.appendChild(box);
-  }
-
-  // Rows rebuild only on add/delete so typing never loses focus.
-  _renderItems() {
-    if (this._config.items_source === "entity") {
-      this._renderDynamicPreview();
-      return;
-    }
-    const items = this._config.items || [];
-    if (this._rows && this._rows.length === items.length) return;
-    this._wrap.innerHTML = "";
-    this._rows = [];
-    items.forEach((item, i) => {
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex; align-items:center; gap:6px; margin-bottom:8px;";
-      const label = this._input(item.label, "Display text", "1", () => {
-        this._config.items[i] = { ...this._config.items[i], label: label.value };
-        this._emit();
-      });
-      const val = this._input(item.value, "Value substituted into the card", "1.4", () => {
-        this._config.items[i] = { ...this._config.items[i], value: val.value };
-        this._emit();
-      });
-      const del = document.createElement("ha-icon");
-      del.icon = "mdi:delete-outline";
-      del.title = "Remove";
-      del.style.cssText = "cursor:pointer; color:var(--secondary-text-color); padding:6px;";
-      del.addEventListener("click", () => {
-        this._config.items = items.filter((_, n) => n !== i);
-        this._rows = null;
-        this._renderItems();
-        this._emit();
-      });
-      row.append(label, val, del);
-      this._wrap.appendChild(row);
-      this._rows.push(row);
-    });
-    const add = document.createElement("div");
-    add.style.cssText =
-      "display:inline-flex; align-items:center; gap:4px; cursor:pointer; color:var(--primary-color); padding:2px 4px 10px;";
-    add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Add choice`;
-    add.addEventListener("click", () => {
-      this._config.items = [...(this._config.items || []), { label: "", value: "" }];
-      this._rows = null;
-      this._renderItems();
-      this._emit();
-      this._wrap.querySelector("div:nth-last-child(2) input")?.focus();
-    });
-    this._wrap.appendChild(add);
   }
 
   async _renderCardEditor() {
@@ -363,70 +343,30 @@ class SbParamCardEditor extends HTMLElement {
     }
   }
 
-  _dynamicSchema() {
-    const st = this._hass?.states?.[this._config.source_entity];
-    const attrs = Object.keys(st?.attributes || {}).filter(
-      (k) => !["friendly_name", "icon", "device_class", "unit_of_measurement", "state_class"].includes(k)
-    );
-    const raw = st?.attributes?.[this._config.source_attribute];
-    const objFields =
-      Array.isArray(raw) && raw[0] && typeof raw[0] === "object" ? Object.keys(raw[0]) : [];
-    const fieldSel = (name) => ({
-      name,
-      selector: { select: { mode: "dropdown", options: objFields.map((f) => ({ value: f, label: f })) } },
-    });
-    return [
-      { name: "source_entity", selector: { entity: {} } },
-      {
-        name: "source_attribute",
-        selector: {
-          select: {
-            mode: "dropdown",
-            options: attrs.length
-              ? attrs.map((a) => ({ value: a, label: a }))
-              : [{ value: this._config.source_attribute || "", label: "(pick an entity first)" }],
-          },
-        },
-      },
-      ...(objFields.length ? [fieldSel("source_label_field"), fieldSel("source_value_field")] : []),
-    ];
-  }
-
   _render() {
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (s) =>
-        ({ parameter: "Parameter name", default: "Default choice", items_source: "Choices",
-           source_entity: "Entity", source_attribute: "Attribute",
-           source_label_field: "Label field", source_value_field: "Value field" }[s.name] || s.name);
+        ({ parameter: "Parameter name", default: "Default value", show_value: "Show the current value with a clear (✕) button" }[s.name] || s.name);
       this._form.computeHelper = (s) =>
         ({
           parameter: "Write $name$ anywhere in the card below — including inside a template — and it is replaced by the chosen value. Transforms: $name:slug$, $name:lower$, $name:upper$, $name:title$.",
-          default: "Used until a choice is made (or when a link carries an unknown value).",
-          source_attribute: "An attribute holding a list or a dictionary \u2014 a dictionary contributes its keys.",
+          default: "Used until a choice is made, when a link carries a value the knob does not offer, or when there is no knob on the view.",
+          show_value: "A small header above the wrapped card. Leave off when several sockets share one knob.",
         }[s.name]);
       this._form.addEventListener("value-changed", (e) => {
-        const sourceChanged =
-          e.detail.value.items_source !== this._config.items_source ||
-          e.detail.value.source_entity !== this._config.source_entity ||
-          e.detail.value.source_attribute !== this._config.source_attribute;
         this._config = { ...this._config, ...e.detail.value };
-        if (sourceChanged) this._rows = null;
         this._emit();
         this._render();
       });
       this.appendChild(this._form);
 
-      const itemsLbl = document.createElement("div");
-      itemsLbl.textContent = "Choices";
-      itemsLbl.style.cssText = "padding:16px 0 8px; color:var(--primary-text-color);";
-      this.appendChild(itemsLbl);
       this._wrap = document.createElement("div");
       this.appendChild(this._wrap);
       const hint = document.createElement("div");
-      hint.textContent =
-        "Point an SB Filter Select card at this card to switch between the choices. Only these values are ever accepted from a link.";
-      hint.style.cssText = "color:var(--secondary-text-color); font-size:.8em; padding:2px 4px 8px;";
+      hint.innerHTML =
+        "This card is a <b>socket</b>: it shows nothing of its own. Add an <b>SB Filter Select</b> (the knob) on this view and point it here — its choices are the only values ever accepted from a link. Without a knob, only the default is used.";
+      hint.style.cssText = "color:var(--secondary-text-color); font-size:.8em; padding:8px 4px 8px;";
       this.appendChild(hint);
 
       const cardLbl = document.createElement("div");
@@ -437,35 +377,35 @@ class SbParamCardEditor extends HTMLElement {
       this.appendChild(this._cardBox);
     }
     this._form.hass = this._hass;
+    // Default: a dropdown of the knob's choices when a knob for this key is
+    // on the page, otherwise free text (the knob may not be placed yet).
+    const knob = KNOBS.get(`seb-${this._config.storage_id || ""}`);
+    const knobChoices = (knob?.items || []).filter((i) => i.value !== "");
+    const hasLegacy = (this._config.items || []).length || this._config.items_source === "entity";
     this._form.schema = [
       { name: "parameter", selector: { text: {} } },
-      {
-        name: "items_source",
-        selector: {
-          select: {
-            mode: "dropdown",
-            options: [
-              { value: "static", label: "Typed in below" },
-              { value: "entity", label: "From an entity attribute" },
-            ],
-          },
-        },
-      },
-      ...(this._config.items_source === "entity" ? this._dynamicSchema() : []),
-      {
-        name: "default",
-        selector: {
-          select: {
-            mode: "dropdown",
-            options: resolveItems(this._hass, this._config)
-              .filter((i) => i?.value)
-              .map((i) => ({ value: String(i.value), label: i.label || String(i.value) })),
-          },
-        },
-      },
+      knobChoices.length
+        ? { name: "default", selector: { select: { mode: "dropdown", custom_value: true,
+            options: knobChoices.map((i) => ({ value: String(i.value), label: i.label || String(i.value) })) } } }
+        : { name: "default", selector: { text: {} } },
+      { name: "show_value", selector: { boolean: {} } },
     ];
-    this._form.data = { items_source: "static", ...this._config };
-    this._renderItems();
+    this._form.data = { show_value: false, ...this._config };
+    // Legacy (pre-0.3.0) choices typed into this card: still honoured, but the
+    // knob supplies them now — offer to drop the copy.
+    this._wrap.innerHTML = "";
+    if (hasLegacy) {
+      const box = document.createElement("div");
+      box.style.cssText = "padding:10px 12px; border:1px dashed var(--divider-color); border-radius:8px; color:var(--secondary-text-color); font-size:.85em;";
+      box.innerHTML = `This card still carries its own choice list (from before 0.3.0). The Filter Select sharing this key supplies the choices now, so the copy is redundant. <span class="drop" style="cursor:pointer; color:var(--primary-color);">Remove the copy</span>`;
+      box.querySelector(".drop").addEventListener("click", () => {
+        const { items, items_source, source_entity, source_attribute, source_label_field, source_value_field, source_sort, ...rest } = this._config;
+        this._config = rest;
+        this._emit();
+        this._render();
+      });
+      this._wrap.appendChild(box);
+    }
     this._renderCardEditor();
   }
 }
@@ -477,7 +417,7 @@ window.customCards.push({
   type: CARD,
   name: "SB Param Card",
   description:
-    "Wraps any card and substitutes a runtime parameter into it ($name$) — one card plus a dropdown instead of one card per value.",
+    "The socket: wraps any card and substitutes a runtime parameter ($name$) chosen by an SB Filter Select on the same view — one card plus a dropdown instead of one card per value.",
   preview: false,
   documentationURL: "https://github.com/snadboy/sb-param-card",
 });

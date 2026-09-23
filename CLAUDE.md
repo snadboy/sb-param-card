@@ -113,3 +113,21 @@ after checking its `setConfig` really is idempotent.
 Probe gotcha that cost an hour: `deep(el, sel)` must start from
 `el.shadowRoot`, not `el` — a custom element's light DOM is empty, so every
 "no spinner / no grid" reading from a probe rooted at the element was blind.
+
+## v0.3.0 — a pure socket (2026-09-23)
+
+The choice list is gone from this card. The allowlist comes from the knob
+(SB Filter Select) sharing this key via `window.__sbKnobs`; the card
+re-evaluates on `sb-knob-changed`. `_choices()` = knob values, then any
+legacy typed/entity choices (pre-0.3.0 configs still work; the editor offers
+"Remove the copy"), then `default`. With no knob, only the default is used.
+`show_value` renders a one-line header (parameter: label ✕); a rejected URL
+value says so instead of showing an empty label. The editor is parameter /
+default (a dropdown of the knob's choices when a knob is on the page, else
+text) / show_value / card. `resolveItems` stays for the legacy path.
+
+The Metra views' seven table sockets and two map sockets lost their nine
+duplicate lists; card-lab's three browsers are now wrapped sockets with
+`filter: $q$`. Verified headless (`knob_socket_test.js`): choices 11 from the
+knob on Metra, wrapped browsers filter 275→13 rows, ✕ clears, an un-offered
+URL value falls back to default, no page errors.
