@@ -185,3 +185,23 @@ Verified: overview text, dialog `:modal`, live edit changes the preview
 only, Cancel restores, nested HA editor renders the Entity Browser editor.
 Not done: a wheel-over-backdrop scroll guard (the scheduler card has one).
 Next: multi-parameter, then the same shell for Entity Browser.
+
+## v0.6.0 — up to 8 parameters per card (2026-09-23)
+
+Config is `parameters: [{name, key, default, dropdown, title, placeholder,
+choices | choices_source…, all_label}]` + `card` + `show_value`. `normalise()`
+folds the 0.5.x single-parameter fields into one entry on read;
+`denormalise()` writes only the new shape. `MAX_PARAMS = 8` — the user asked
+for 5–10; past a handful the overview and the URL stop being readable.
+Per parameter the card is knob (`dropdown: true`) or socket; the registry is
+keyed per parameter (`seb-<key>`) and now carries the knob's **default**, so a
+socket with no default of its own follows the knob's — otherwise a knob with
+`default: Workday` showed Workday while its silent socket showed "" (seen on
+the demo's ④ section before the fix). Substitution runs once per parameter;
+the child rebuilds when the JSON of all values changes. The knob card draws
+one dropdown row per `dropdown` parameter in one `ha-card`. Editor: the
+Parameters dialog is rows of name/key/default with add (up to the cap) and
+remove (never below one); the Dropdowns dialog has a tab per parameter. Peer
+count excludes HA's editor preview by walking shadow hosts — `closest()`
+does not cross them. Demo view section ④ is the two-parameter example
+(`add_multiparam_section.py`); `multiparam_test.js` drives it and the editor.

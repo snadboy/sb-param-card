@@ -1,24 +1,34 @@
-/* SB Param Card — one card, two switches.
+/* SB Param Card — one card, two switches, up to MAX_PARAMS parameters.
  *
- * A runtime PARAMETER shared through the page URL (?seb-<storage_id>=value):
+ * Each PARAMETER is shared through the page URL (?seb-<key>=value):
  *
- *   show_selector: true   the card is the KNOB — it carries the choices, draws
- *                         the dropdown, writes the URL and publishes its
- *                         choices for the other cards sharing its key
- *   card: {...}           the card is a SOCKET — it substitutes $parameter$
- *                         into the wrapped card before that card is built
+ *   dropdown: true   for that parameter this card is the KNOB — it carries
+ *                    the choices, draws the dropdown, writes the URL and
+ *                    publishes its choices for the other cards sharing the key
+ *   card: {...}      the card is a SOCKET — every $name$ is substituted into
+ *                    the wrapped card before that card is built
  *
- * Either, or both: a bare dropdown; a dropdown with the card it drives right
- * underneath; or a silent socket taking its choices from the knob elsewhere
- * on the view. One knob can drive any number of sockets. No helper entities.
+ * Either, or both: a bare dropdown (or several); dropdowns with the card they
+ * drive right underneath; or a silent socket taking its choices from the
+ * knobs elsewhere on the view. No helper entities.
  *
- * A socket accepts from the URL only the values the knob offers (plus its
- * default), so a link someone sends you can never splice arbitrary text into
- * a template Home Assistant will execute.
+ * A socket accepts from the URL only the values the knob offers (plus the
+ * parameter's default), so a link someone sends you can never splice
+ * arbitrary text into a template Home Assistant will execute.
+ *
+ * Config (0.6.0):
+ *   parameters: [{ name, key, default, dropdown, title, placeholder,
+ *                  choices | choices_source/source_entity/source_attribute, all_label }]
+ *   card, show_value
+ * The 0.5.x single-parameter shape (parameter, storage_id, show_selector, …)
+ * is still read and folded into one entry.
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
+// A card is a parameter BLOCK, not a form: past a handful the overview stops
+// being readable and the URL stops being shareable by eye.
+const MAX_PARAMS = 8;
 // Card types whose element is re-configured in place on a value change
 // instead of rebuilt (see _update). HA's own hui-card never calls setConfig
 // twice on an element, so a second setConfig is an untested path in every
@@ -99,8 +109,41 @@ const resolveChoices = (hass, config) => {
 };
 const choicesSignature = (items) => items.map((i) => i.label + "\u0000" + i.value).join("|");
 
+
+// ---- config shape -----------------------------------------------------------
+const PARAM_FIELDS = ["name", "key", "default", "dropdown", "title", "placeholder", "choices",
+  "choices_source", "source_entity", "source_attribute", "source_label_field", "source_value_field",
+  "source_sort", "all_label"];
+const newKey = () => "seb-" + Math.random().toString(36).slice(2, 8);
+
+// One shape inside the card whatever was written: 0.6.0 `parameters` or the
+// 0.5.x single-parameter fields. Never mutates the input.
+const normalise = (config) => {
+  const c = { ...config };
+  let params;
+  if (Array.isArray(c.parameters) && c.parameters.length) {
+    params = c.parameters.map((p, i) => ({ name: p.name || `p${i + 1}`, key: p.key || newKey(), ...p }));
+  } else {
+    const p = { name: c.parameter || "value", key: c.storage_id || newKey(), dropdown: !!c.show_selector };
+    for (const f of ["default", "title", "placeholder", "choices", "choices_source", "source_entity",
+      "source_attribute", "source_label_field", "source_value_field", "source_sort", "all_label"])
+      if (c[f] !== undefined) p[f] = c[f];
+    params = [p];
+  }
+  return { ...c, parameters: params.slice(0, MAX_PARAMS) };
+};
+
+// What the editor writes: the 0.6.0 shape only, legacy fields dropped.
+const denormalise = (config) => {
+  const { parameter, storage_id, show_selector, title, placeholder, choices, choices_source,
+    source_entity, source_attribute, source_label_field, source_value_field, source_sort, all_label, default: d, ...rest } = config;
+  return { ...rest, parameters: (config.parameters || []).map((p) => {
+    const q = {}; for (const f of PARAM_FIELDS) if (p[f] !== undefined && p[f] !== "" && p[f] !== null) q[f] = p[f]; return q; }) };
+};
+
 const STYLE = `
-  .sbp-knob { padding: 12px 16px; display: flex; align-items: center; gap: 12px; margin-bottom: var(--sbp-gap, 8px); }
+  .sbp-knob { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; margin-bottom: var(--sbp-gap, 8px); }
+  .sbp-knob .krow { display: flex; align-items: center; gap: 12px; }
   .sbp-knob .title { font-weight: 500; color: var(--primary-text-color); white-space: nowrap; }
   .sbp-knob select { flex: 1; min-width: 0; font: inherit; color: var(--primary-text-color);
     background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border: none;
@@ -110,9 +153,9 @@ const STYLE = `
      dark themes get light-gray text on a white popup. */
   .sbp-knob option { background: var(--card-background-color, Canvas); color: var(--primary-text-color, CanvasText); }
   .sbp-knob .warn { color: var(--warning-color, orange); font-size: .85em; }
-  .sbp-bar { display: flex; align-items: center; gap: 8px; padding: 4px 12px 6px; font-size: .85em; color: var(--secondary-text-color); }
+  .sbp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 4px 12px 6px; font-size: .85em; color: var(--secondary-text-color); }
   .sbp-bar b { color: var(--primary-text-color); }
-  .sbp-bar .sbp-clear { cursor: pointer; color: var(--primary-color); }
+  .sbp-bar .sbp-clear { cursor: pointer; color: var(--primary-color); margin-left: 4px; }
 `;
 
 class SbParamCard extends HTMLElement {
@@ -122,24 +165,20 @@ class SbParamCard extends HTMLElement {
 
   static getStubConfig() {
     return {
-      parameter: "value",
-      storage_id: "seb-" + Math.random().toString(36).slice(2, 8),
-      show_selector: true,
-      title: "Choose",
-      choices: [{ label: "One", value: "one" }, { label: "Two", value: "two" }],
-      default: "one",
+      parameters: [{ name: "value", key: newKey(), dropdown: true, title: "Choose", default: "one",
+        choices: [{ label: "One", value: "one" }, { label: "Two", value: "two" }] }],
       card: { type: "markdown", content: "Parameter is **$value$**" },
     };
   }
 
   setConfig(config) {
     if (!config) throw new Error("Invalid configuration");
-    this._config = { parameter: "value", ...config };
+    this._config = normalise(config);
     this._child?.remove();
     this._child = null;
     this._childType = null;
-    this._lastValue = undefined;
-    this._sel?.remove(); this._sel = null;
+    this._lastSig = undefined;
+    this._sel?.remove(); this._sel = null; this._selSig = null;
     this._bar?.remove(); this._bar = null;
     this.querySelectorAll(":scope > ha-card.sbp-error").forEach((n) => n.remove());
     if (!this.querySelector(":scope > style")) {
@@ -152,30 +191,30 @@ class SbParamCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this._isKnob() && this._config.choices_source === "entity") this._publish();
+    if (this._knobs().some((p) => p.choices_source === "entity")) this._publishAll();
     if (this._child) this._child.hass = hass;
     else this._update();
   }
 
   getCardSize() {
-    return (this._isKnob() ? 1 : 0) + (this._child?.getCardSize?.() ?? (this._config?.card ? 3 : 0));
+    return (this._knobs().length ? 1 : 0) + (this._child?.getCardSize?.() ?? (this._config?.card ? 3 : 0));
   }
 
   connectedCallback() {
     this._onNav = () => this._update();
-    // A knob only refreshes its own dropdown on this event; re-publishing
-    // here would ping-pong with a second knob on the same key (HA's editor
+    // A knob only refreshes its dropdowns on this event; re-publishing here
+    // would ping-pong with a second knob on the same key (HA's editor
     // preview IS a second knob) until the stack overflows. Verified.
     this._onKnob = (e) => {
-      if (e.detail?.key !== this._key()) return;
-      if (this._isKnob()) { if (this._sel) this._renderSelector(this._value(), true); return; }
+      const p = this._params().find((q) => `seb-${q.key}` === e.detail?.key);
+      if (!p) return;
+      if (p.dropdown) { if (this._sel) this._renderSelector(true); return; }
       this._update();
     };
     window.addEventListener("location-changed", this._onNav);
     window.addEventListener("popstate", this._onNav);
     window.addEventListener("sb-knob-changed", this._onKnob);
-    // HA builds cards detached and re-attaches them during layout.
-    if (this._config && this._hass) this._publish();
+    if (this._config && this._hass) this._publishAll();     // HA re-attaches cards during layout
     this._update();
   }
 
@@ -183,79 +222,92 @@ class SbParamCard extends HTMLElement {
     window.removeEventListener("location-changed", this._onNav);
     window.removeEventListener("popstate", this._onNav);
     window.removeEventListener("sb-knob-changed", this._onKnob);
-    const key = this._key();
-    if (KNOBS.get(key)?.el === this) {
-      KNOBS.delete(key);
-      announce(key);
+    for (const p of this._knobs()) {
+      const key = `seb-${p.key}`;
+      if (KNOBS.get(key)?.el === this) { KNOBS.delete(key); announce(key); }
     }
   }
 
-  _key() {
-    return `seb-${this._config?.storage_id || ""}`;
+  _params() { return this._config?.parameters || []; }
+  _knobs() { return this._params().filter((p) => p.dropdown); }
+
+  /** Publish every dropdown's choices for the sockets sharing its key. */
+  _publishAll() {
+    for (const p of this._knobs()) {
+      const items = resolveChoices(this._hass, p);
+      const sig = choicesSignature(items);
+      const key = `seb-${p.key}`;
+      const prev = KNOBS.get(key);
+      const sigd = sig + "\u0003" + (p.default ?? "");
+      if (prev && prev.sig === sigd && (prev.el === this || prev.el.isConnected)) continue;   // same list already published by a live knob
+      KNOBS.set(key, { el: this, items, sig: sigd, default: p.default });
+      announce(key);
+    }
+    if (this._sel) this._renderSelector(true);
   }
 
-  _isKnob() {
-    return !!this._config?.show_selector;
+  _items(p) {
+    if (p.dropdown) return resolveChoices(this._hass, p);
+    return KNOBS.get(`seb-${p.key}`)?.items || [];
   }
 
-  /** The knob publishes its choices for the sockets sharing its key. */
-  _publish() {
-    if (!this._isKnob() || !this._config) return;
-    const items = resolveChoices(this._hass, this._config);
-    const sig = choicesSignature(items);
-    const key = this._key();
-    const prev = KNOBS.get(key);
-    if (prev && prev.sig === sig && (prev.el === this || prev.el.isConnected)) return;   // same list already published by a live knob
-    KNOBS.set(key, { el: this, items, sig });
-    announce(key);
-    if (this._sel) this._renderSelector(this._value(), true);
-  }
-
-  _items() {
-    if (this._isKnob()) return resolveChoices(this._hass, this._config);
-    return KNOBS.get(this._key())?.items || [];
-  }
-
-  // The allowlist: the choices (own, or the knob's), then the default.
-  _choices() {
+  // The allowlist for one parameter: its choices (own, or the knob's), then its default.
+  _choices(p) {
     const out = [];
     const push = (v) => { const s = String(v ?? ""); if (!out.includes(s)) out.push(s); };
-    for (const i of this._items()) push(i.value);
-    if (this._config.default != null) push(this._config.default);
+    for (const i of this._items(p)) push(i.value);
+    const def = this._default(p);
+    if (def != null) push(def);
     return out;
   }
 
-  _labelFor(value) {
-    return this._items().find((i) => String(i.value ?? "") === value)?.label || value;
+  _labelFor(p, value) {
+    return this._items(p).find((i) => String(i.value ?? "") === value)?.label || value;
   }
 
-  _live() {
-    try { return new URLSearchParams(location.search).get(this._key()); } catch (e) { return null; }
+  _live(p) {
+    try { return new URLSearchParams(location.search).get(`seb-${p.key}`); } catch (e) { return null; }
   }
 
-  _value() {
-    const url = this._live();
-    const choices = this._choices();
+  _default(p) {
+    // A socket without a default of its own follows the knob's, so the knob
+    // and its sockets show the same thing before anything is chosen.
+    if (p.default != null && p.default !== "") return String(p.default);
+    if (!p.dropdown) { const k = KNOBS.get(`seb-${p.key}`); if (k && k.default != null && k.default !== "") return String(k.default); }
+    return null;
+  }
+
+  _valueOf(p) {
+    const url = this._live(p);
+    const choices = this._choices(p);
     if (url != null && choices.includes(url)) return url;
-    if (this._config.default != null && choices.includes(String(this._config.default)))
-      return String(this._config.default);
-    // Nothing chosen and no default: the parameter is EMPTY — the same on the
-    // knob and on every socket, rather than silently the first choice.
+    const def = this._default(p);
+    if (def != null && choices.includes(def)) return def;
+    // Nothing chosen and no default anywhere: EMPTY — never silently the
+    // first choice.
     return "";
   }
 
+  _values() {
+    const out = {};
+    for (const p of this._params()) out[p.name] = this._valueOf(p);
+    return out;
+  }
+
   /** Write a choice to the URL — the wire every socket on the page listens to. */
-  _pick(value) {
+  _pick(p, value) {
     const params = new URLSearchParams(location.search);
-    value ? params.set(this._key(), value) : params.delete(this._key());
+    value ? params.set(`seb-${p.key}`, value) : params.delete(`seb-${p.key}`);
     const q = params.toString();
     history.pushState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
     fire(this, "location-changed", {});
   }
 
-  _renderSelector(value, force = false) {
-    const items = this._items();
-    const sig = choicesSignature(items) + "\u0001" + value;
+  _renderSelector(force = false) {
+    const knobs = this._knobs();
+    if (!knobs.length) { this._sel?.remove(); this._sel = null; return; }
+    const rows = knobs.map((p) => ({ p, items: this._items(p), value: this._valueOf(p), live: this._live(p) }));
+    const sig = rows.map((r) => choicesSignature(r.items) + "\u0001" + r.value + "\u0001" + (r.live == null)).join("\u0002");
     if (this._sel && this._selSig === sig && !force) return;
     this._selSig = sig;
     if (!this._sel) {
@@ -264,46 +316,55 @@ class SbParamCard extends HTMLElement {
       const style = this.querySelector(":scope > style");
       style ? style.after(this._sel) : this.prepend(this._sel);
     }
-    const cur = items.findIndex((i) => i.value === value);
-    const live = this._live();
-    // Placeholder shows until a choice is made; a default counts as a choice
-    // only when it is one of the items (then the dropdown shows it).
-    const sel = live == null && this._config.default == null ? -1 : cur;
-    this._sel.innerHTML = `
-      ${this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : ""}
-      ${items.length ? `<select>
-        <option value="-1" ${sel === -1 ? "selected" : ""} disabled hidden>${esc(this._config.placeholder || "Select…")}</option>
-        ${items.map((i, n) => `<option value="${n}" ${n === sel ? "selected" : ""}>${esc(i.label || i.value)}</option>`).join("")}
-      </select>` : `<div class="warn">No choices yet — add some in the editor</div>`}`;
-    this._sel.querySelector("select")?.addEventListener("change", (e) => {
-      const item = items[Number(e.target.value)];
-      if (item) this._pick(item.value);
+    this._sel.innerHTML = rows.map(({ p, items, value, live }, n) => {
+      const cur = items.findIndex((i) => i.value === value);
+      // Placeholder until a choice is made; a default counts as a choice only
+      // when it is one of the items (then the dropdown shows it).
+      const sel = live == null && this._default(p) == null ? -1 : cur;
+      return `<div class="krow" data-n="${n}">
+        ${p.title ? `<div class="title">${esc(p.title)}</div>` : ""}
+        ${items.length ? `<select>
+          <option value="-1" ${sel === -1 ? "selected" : ""} disabled hidden>${esc(p.placeholder || "Select…")}</option>
+          ${items.map((i, k) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(i.label || i.value)}</option>`).join("")}
+        </select>` : `<div class="warn">No choices for $${esc(p.name)}$ yet — add some in the editor</div>`}
+      </div>`;
+    }).join("");
+    this._sel.querySelectorAll(".krow").forEach((row) => {
+      const r = rows[Number(row.dataset.n)];
+      row.querySelector("select")?.addEventListener("change", (e) => {
+        const item = r.items[Number(e.target.value)];
+        if (item) this._pick(r.p, item.value);
+      });
     });
   }
 
-  // Optional header for a SOCKET: the current value and a ✕ that clears it.
-  // Off by default — seven sockets on one view do not want seven headers.
-  _renderBar(value) {
-    const live = this._live();
-    const want = !this._isKnob() && !!this._config.show_value && live != null && live !== "";
+  // Optional header for a SOCKET: every parameter that has a URL value, each
+  // with a ✕ that clears it. Off by default — seven sockets on one view do
+  // not want seven headers.
+  _renderBar() {
+    const socketParams = this._params().filter((p) => !p.dropdown);
+    const live = socketParams.map((p) => ({ p, live: this._live(p), value: this._valueOf(p) })).filter((x) => x.live != null && x.live !== "");
+    const want = !!this._config.show_value && live.length > 0;
     if (!want) { this._bar?.remove(); this._bar = null; return; }
     if (!this._bar) {
       this._bar = document.createElement("div");
       this._bar.className = "sbp-bar";
-      (this._sel || this.querySelector(":scope > style") || this).after
-        ? (this._sel || this.querySelector(":scope > style")).after(this._bar) : this.prepend(this._bar);
+      const anchor = this._sel || this.querySelector(":scope > style");
+      anchor ? anchor.after(this._bar) : this.prepend(this._bar);
     }
-    const shown = live === value ? esc(this._labelFor(value))
-      : `<span style="color:var(--warning-color, orange)">“${esc(live)}” is not a choice — showing default</span>`;
-    this._bar.innerHTML = `<span>${esc(this._config.parameter)}: <b>${shown}</b></span>` +
-      `<span class="sbp-clear" title="Clear">✕</span>`;
-    this._bar.querySelector(".sbp-clear").addEventListener("click", () => {
+    this._bar.innerHTML = live.map(({ p, live, value }, n) => {
+      const shown = live === value ? esc(this._labelFor(p, value))
+        : `<span style="color:var(--warning-color, orange)">“${esc(live)}” is not a choice — showing default</span>`;
+      return `<span>${esc(p.name)}: <b>${shown}</b><span class="sbp-clear" data-n="${n}" title="Clear">✕</span></span>`;
+    }).join("");
+    this._bar.querySelectorAll(".sbp-clear").forEach((x) => x.addEventListener("click", () => {
+      const { p } = live[Number(x.dataset.n)];
       const params = new URLSearchParams(location.search);
-      params.delete(this._key());
+      params.delete(`seb-${p.key}`);
       const q = params.toString();
       history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
       fire(this, "location-changed", {});
-    });
+    }));
   }
 
   _error(msg) {
@@ -317,22 +378,24 @@ class SbParamCard extends HTMLElement {
 
   async _update() {
     if (!this._hass || !this._config) return;
-    if (!this._config.show_selector && !this._config.card) {
-      this._error("turn on the selector, pick a card to wrap, or both");
+    if (!this._knobs().length && !this._config.card) {
+      this._error("turn on a dropdown, wrap a card, or both");
       return;
     }
-    if (this._isKnob()) this._publish();
-    const value = this._value();
-    if (this._isKnob()) this._renderSelector(value);
-    this._renderBar(value);
+    this._publishAll();
+    this._renderSelector();
+    this._renderBar();
     if (!this._config.card) return;
 
-    if (this._child && value === this._lastValue) {
+    const values = this._values();
+    const sig = JSON.stringify(values);
+    if (this._child && sig === this._lastSig) {
       this._child.hass = this._hass;
       return;
     }
-    this._lastValue = value;
-    const cfg = substitute(this._config.card, this._config.parameter, value);
+    this._lastSig = sig;
+    let cfg = this._config.card;
+    for (const [name, value] of Object.entries(values)) cfg = substitute(cfg, name, value);
 
     // Same card type? Only a few cards are re-configured IN PLACE, to keep
     // their view state (a map's zoom). Everything else is rebuilt.
@@ -374,18 +437,6 @@ const loadHuiEditors = async () => {
   return !!customElements.get("hui-card-element-editor");
 };
 
-// ============================================================================
-// The editor: an OVERVIEW of grouped, read-only settings, each group with an
-// Edit button that opens ONE focused dialog. A form for everything at once
-// hides what matters (which card is the knob, how many choices, which tokens
-// the wrapped card really uses); a summary can say it.
-//
-// Dialogs are native <dialog> + showModal(): the browser's top layer, so they
-// stack correctly over HA's own card-editor dialog from inside its shadow
-// tree. Edits apply LIVE (HA's preview follows); a snapshot is taken on open,
-// Cancel restores it, Done / ✕ / Escape keep what is there.
-// ============================================================================
-
 const pretty = (v) => (v == null || v === "" ? "" : String(v));
 const CARD_TYPE_NAMES = { markdown: "Markdown", entity: "Entity", entities: "Entities", calendar: "Calendar",
   map: "Map", tile: "Tile", button: "Button", gauge: "Gauge", history_graph: "History graph",
@@ -405,6 +456,7 @@ const tokenUsage = (card) => {
   return counts;
 };
 
+
 const EDITOR_STYLE = `
   .spe { color: var(--primary-text-color); }
   .spe .sec { background: var(--secondary-background-color, rgba(127,127,127,.08)); border: 1px solid var(--divider-color); border-radius: 10px; margin-bottom: 12px; }
@@ -419,7 +471,7 @@ const EDITOR_STYLE = `
   .spe .off { color: var(--secondary-text-color); font-style: italic; }
   .spe .warn { color: var(--warning-color, orange); }
   .spe .note { color: var(--secondary-text-color); font-size: .8em; padding: 2px 4px 6px; }
-  dialog.sped { border: 1px solid var(--divider-color); border-radius: 12px; padding: 0; width: min(560px, 92vw); max-height: 85vh;
+  dialog.sped { border: 1px solid var(--divider-color); border-radius: 12px; padding: 0; width: min(600px, 92vw); max-height: 85vh;
     background: var(--card-background-color, var(--ha-card-background, #fff)); color: var(--primary-text-color); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
   dialog.sped::backdrop { background: rgba(0,0,0,.45); }
   dialog.sped .ph { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--divider-color); font-weight: 500; }
@@ -431,14 +483,21 @@ const EDITOR_STYLE = `
   dialog.sped .hint { color: var(--secondary-text-color); font-size: .8em; padding: 6px 2px 10px; }
   dialog.sped .sub { color: var(--secondary-text-color); font-size: .75em; letter-spacing: .04em; text-transform: uppercase; margin: 10px 0 6px; }
   dialog.sped .links { display: flex; justify-content: flex-end; gap: 16px; padding-bottom: 6px; }
-  dialog.sped .links span { cursor: pointer; color: var(--primary-color); font-size: .85em; }
+  dialog.sped .links span, dialog.sped .link { cursor: pointer; color: var(--primary-color); font-size: .85em; }
+  dialog.sped .prow { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  dialog.sped .prow input { flex: 1; min-width: 0; box-sizing: border-box; font: inherit; color: var(--primary-text-color);
+    background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border: none; border-bottom: 1px solid var(--divider-color);
+    border-radius: 4px 4px 0 0; padding: 12px 10px; outline-color: var(--primary-color); }
+  dialog.sped .prow .del { cursor: pointer; color: var(--secondary-text-color); padding: 6px; }
+  dialog.sped .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  dialog.sped .tabs span { border: 1px solid var(--divider-color); border-radius: 12px; padding: 3px 10px; cursor: pointer; font-size: .85em; }
+  dialog.sped .tabs span.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
 `;
 
 class SbParamCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { parameter: "value", ...config };
-    if (!this._config.storage_id)
-      this._config.storage_id = "seb-" + Math.random().toString(36).slice(2, 8);
+    this._config = normalise(config);
+    if (this._tab == null || this._tab >= this._config.parameters.length) this._tab = 0;
     this._render();
   }
 
@@ -456,7 +515,7 @@ class SbParamCardEditor extends HTMLElement {
   }
 
   _emit() {
-    fire(this, "config-changed", { config: this._config });
+    fire(this, "config-changed", { config: denormalise(this._config) });
   }
 
   _set(patch) {
@@ -465,72 +524,79 @@ class SbParamCardEditor extends HTMLElement {
     this._renderOverview();
   }
 
+  _setParam(i, patch) {
+    const parameters = this._config.parameters.map((p, n) => (n === i ? { ...p, ...patch } : p));
+    this._set({ parameters });
+  }
+
+  _params() { return this._config.parameters; }
+
   // ---- overview -----------------------------------------------------------
-  _peers() {
+  _peers(key) {
     // Other Param Cards on the page sharing this key — the dashboard is
     // behind HA's editor dialog, so they are there to count.
-    const key = this._config.storage_id;
     let n = 0;
+    const inEditor = (el) => { let x = el; while (x) { if (x.tagName === "HUI-DIALOG-EDIT-CARD") return true; x = x.parentElement || (x.getRootNode && x.getRootNode().host); } return false; };
     const walk = (root) => {
       for (const el of root.querySelectorAll("*")) {
-        if (el.tagName === "SB-PARAM-CARD" && el._config?.storage_id === key && !el.closest("hui-dialog-edit-card, hui-card-preview")) n++;
+        if (el.tagName === "SB-PARAM-CARD" && (el._config?.parameters || []).some((p) => p.key === key) && !inEditor(el)) n++;
         if (el.shadowRoot) walk(el.shadowRoot);
       }
     };
     try { walk(document); } catch (e) { /* ignore */ }
-    return Math.max(0, n - 1);
+    return Math.max(0, n - 1);   // minus the card being edited
   }
 
-  _summaryParameter() {
-    const c = this._config;
-    const role = c.show_selector && c.card ? "knob and socket" : c.show_selector ? "knob (dropdown)" : c.card ? "socket" : `<span class="warn">nothing yet — turn on the dropdown, wrap a card, or both</span>`;
-    const peers = this._peers();
-    return [
-      ["Key", `<code>${esc(c.storage_id)}</code>${peers ? `<span class="chip">shared with ${peers} other card${peers > 1 ? "s" : ""}</span>` : ""}`],
-      ["Parameter", `<code>$${esc(c.parameter)}$</code>${c.default != null && c.default !== "" ? `<span class="chip">default ${esc(c.default)}</span>` : `<span class="chip off">no default — empty until chosen</span>`}`],
-      ["This card is", role],
-    ];
+  _summaryParameters() {
+    const ps = this._params();
+    const rows = ps.map((p) => {
+      const peers = this._peers(p.key);
+      const role = p.dropdown ? "knob" : "socket";
+      return [`<code>$${esc(p.name)}$</code>`, `<code>${esc(p.key)}</code> <span class="chip">${role}</span>${peers ? `<span class="chip">${peers} other card${peers > 1 ? "s" : ""}</span>` : ""}${p.default != null && p.default !== "" ? `<span class="chip">default ${esc(p.default)}</span>` : ""}`];
+    });
+    const dups = new Set(ps.map((p) => p.name).filter((n, i, a) => a.indexOf(n) !== i));
+    if (dups.size) rows.push(["", `<span class="warn">duplicate name: ${[...dups].map((d) => `<code>$${esc(d)}$</code>`).join(" ")}</span>`]);
+    rows.push(["This card is", ps.some((p) => p.dropdown) && this._config.card ? "knob and socket" : ps.some((p) => p.dropdown) ? "knob (dropdown only)" : this._config.card ? "socket" : `<span class="warn">nothing yet — turn on a dropdown, wrap a card, or both</span>`]);
+    return rows;
   }
 
-  _summaryDropdown() {
-    const c = this._config;
-    if (!c.show_selector) return [["Dropdown", `<span class="off">off — choices come from the knob sharing the key</span>`]];
-    const items = resolveChoices(this._hass, c);
-    const src = c.choices_source === "entity"
-      ? `${items.length} choice${items.length === 1 ? "" : "s"} from <code>${esc(c.source_entity || "?")}</code> · ${esc(c.source_attribute || "?")}`
-      : items.length ? `${items.length} choice${items.length === 1 ? "" : "s"}: ${esc(items.slice(0, 5).map((i) => i.label).join(", "))}${items.length > 5 ? "…" : ""}`
-      : `<span class="warn">no choices yet</span>`;
-    return [
-      ["Choices", src],
-      ["Label", c.title ? esc(c.title) : `<span class="off">none</span>`],
-      ...(c.placeholder ? [["Placeholder", esc(c.placeholder)]] : []),
-      ...(c.all_label ? [["“All” choice", esc(c.all_label)]] : []),
-    ];
+  _summaryDropdowns() {
+    const knobs = this._params().filter((p) => p.dropdown);
+    if (!knobs.length) return [["Dropdowns", `<span class="off">none — choices come from the knobs sharing the keys</span>`]];
+    return knobs.map((p) => {
+      const items = resolveChoices(this._hass, p);
+      const src = p.choices_source === "entity"
+        ? `${items.length} from <code>${esc(p.source_entity || "?")}</code> · ${esc(p.source_attribute || "?")}`
+        : items.length ? `${items.length}: ${esc(items.slice(0, 4).map((i) => i.label).join(", "))}${items.length > 4 ? "…" : ""}`
+        : `<span class="warn">no choices yet</span>`;
+      return [`<code>$${esc(p.name)}$</code>${p.title ? ` “${esc(p.title)}”` : ""}`, src];
+    });
   }
 
   _summaryCard() {
     const c = this._config;
-    if (!c.card) return [["Card", c.show_selector ? `<span class="off">none — dropdown only</span>` : `<span class="warn">none</span>`]];
+    if (!c.card) return [["Card", this._params().some((p) => p.dropdown) ? `<span class="off">none — dropdown only</span>` : `<span class="warn">none</span>`]];
     const use = tokenUsage(c.card);
-    const mine = use[c.parameter] || 0;
-    const others = Object.keys(use).filter((k) => k !== c.parameter);
+    const names = this._params().map((p) => p.name);
+    const mine = names.map((n) => (use[n] ? `<code>$${esc(n)}$</code> ×${use[n]}` : `<span class="warn">$${esc(n)}$ unused</span>`)).join(" ");
+    const others = Object.keys(use).filter((k) => !names.includes(k));
     return [
       ["Type", esc(cardTypeName(c.card.type))],
-      ["Uses", (mine ? `<code>$${esc(c.parameter)}$</code> ×${mine}` : `<span class="warn">$${esc(c.parameter)}$ not used anywhere</span>`) +
-        (others.length ? ` <span class="warn">unknown: ${others.map((o) => `<code>$${esc(o)}$</code>`).join(" ")}</span>` : "")],
-      ...(c.show_selector ? [] : [["Value header", c.show_value ? "on" : `<span class="off">off</span>`]]),
+      ["Uses", mine + (others.length ? ` <span class="warn">unknown: ${others.map((o) => `<code>$${esc(o)}$</code>`).join(" ")}</span>` : "")],
+      ...(this._params().every((p) => p.dropdown) ? [] : [["Value header", c.show_value ? "on" : `<span class="off">off</span>`]]),
     ];
   }
 
   _renderOverview() {
     if (!this._ov) return;
+    const n = this._params().length;
     const sec = (id, title, rows) => `<div class="sec"><h3>${title}<button data-sec="${id}">Edit</button></h3>
       <div class="rows">${rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}</div></div>`;
     this._ov.innerHTML =
-      sec("parameter", "Parameter", this._summaryParameter()) +
-      sec("dropdown", "Dropdown", this._summaryDropdown()) +
+      sec("parameters", `Parameter${n === 1 ? "" : "s"}${n > 1 ? ` <span class="chip">${n} of ${MAX_PARAMS}</span>` : ""}`, this._summaryParameters()) +
+      sec("dropdowns", "Dropdowns", this._summaryDropdowns()) +
       sec("card", "Wrapped card", this._summaryCard()) +
-      `<div class="note">Cards sharing the key share the value. The one with the dropdown is the knob; the others are sockets and accept only the knob's choices.</div>`;
+      `<div class="note">Cards sharing a key share that value. The one with the dropdown is its knob; the others are sockets and accept only the knob's choices.</div>`;
     this._ov.querySelectorAll("button[data-sec]").forEach((b) => b.addEventListener("click", () => this._openDialog(b.dataset.sec)));
   }
 
@@ -553,7 +619,7 @@ class SbParamCardEditor extends HTMLElement {
     this._snap = JSON.parse(JSON.stringify(this._config));
     const d = document.createElement("dialog");
     d.className = "sped";
-    d.innerHTML = `<div class="ph"><span>${{ parameter: "Parameter", dropdown: "Dropdown", card: "Wrapped card" }[id]}</span><button class="x" title="Close">✕</button></div>
+    d.innerHTML = `<div class="ph"><span>${{ parameters: "Parameters", dropdowns: "Dropdowns", card: "Wrapped card" }[id]}</span><button class="x" title="Close">✕</button></div>
       <div class="pb"></div>
       <div class="pf"><button class="cancel">Cancel</button><button class="done">Done</button></div>`;
     this.appendChild(d);
@@ -578,13 +644,13 @@ class SbParamCardEditor extends HTMLElement {
     this._renderOverview();
   }
 
-  _mkForm(schema, labels, helpers, onChange) {
+  _mkForm(schema, data, labels, helpers, onChange) {
     const f = document.createElement("ha-form");
     f.hass = this._hass;
     f.computeLabel = (s) => labels[s.name] || s.name;
     f.computeHelper = (s) => helpers[s.name];
     f.schema = schema;
-    f.data = this._config;
+    f.data = data;
     f.addEventListener("value-changed", (e) => { e.stopPropagation(); onChange(e.detail.value); });
     return f;
   }
@@ -594,152 +660,169 @@ class SbParamCardEditor extends HTMLElement {
     if (!d) return;
     const body = d.querySelector(".pb");
     body.innerHTML = "";
-    if (this._open === "parameter") this._bodyParameter(body);
-    else if (this._open === "dropdown") this._bodyDropdown(body);
+    if (this._open === "parameters") this._bodyParameters(body);
+    else if (this._open === "dropdowns") this._bodyDropdowns(body);
     else this._bodyCard(body);
   }
 
-  _bodyParameter(body) {
-    const knob = KNOBS.get(`seb-${this._config.storage_id || ""}`);
-    const choices = (this._config.show_selector ? resolveChoices(this._hass, this._config) : knob?.items || []).filter((i) => i.value !== "");
-    this._form = this._mkForm(
-      [
-        { name: "storage_id", selector: { text: {} } },
-        { name: "parameter", selector: { text: {} } },
-        choices.length
-          ? { name: "default", selector: { select: { mode: "dropdown", custom_value: true, options: choices.map((i) => ({ value: i.value, label: i.label || i.value })) } } }
-          : { name: "default", selector: { text: {} } },
-      ],
-      { storage_id: "Key", parameter: "Parameter name", default: "Default value" },
-      { storage_id: "Cards that share this key share the value. Copy it into the other cards.",
-        parameter: "Write $name$ anywhere in the wrapped card — including inside a template. Transforms: $name:slug$, :lower, :upper, :title.",
-        default: "Used until a choice is made, or when a link carries a value that is not a choice. Leave empty for an empty parameter." },
-      (v) => this._set(v),
-    );
-    body.appendChild(this._form);
-  }
-
-  _bodyDropdown(body) {
-    const c = this._config;
-    const schema = [
-      { name: "show_selector", selector: { boolean: {} } },
-      ...(c.show_selector ? [
-        { name: "title", selector: { text: {} } },
-        { name: "placeholder", selector: { text: {} } },
-        { name: "choices_source", selector: { select: { mode: "dropdown", options: [
-            { value: "static", label: "Typed in below" }, { value: "entity", label: "From an entity attribute" } ] } } },
-        ...(c.choices_source === "entity" ? this._dynamicSchema() : []),
-        { name: "all_label", selector: { text: {} } },
-      ] : []),
-    ];
-    this._form = this._mkForm(schema,
-      { show_selector: "Show a dropdown (this card is the knob)", title: "Label", placeholder: "Placeholder (before a choice)",
-        choices_source: "Choices", source_entity: "Entity", source_attribute: "Attribute",
-        source_label_field: "Label field", source_value_field: "Value field", all_label: "Extra “show all” choice" },
-      { show_selector: "Off: this card is a silent socket and takes its choices from the knob sharing its key.",
-        choices_source: "Typed in, or read live from an entity attribute (a dictionary contributes its keys, a list its entries).",
-        all_label: "Optional first choice that clears the value, e.g. “All lines”." },
-      (v) => {
-        const structural = v.show_selector !== this._config.show_selector || v.choices_source !== this._config.choices_source ||
-          v.source_entity !== this._config.source_entity || v.source_attribute !== this._config.source_attribute;
-        this._set({ choices_source: "static", ...v });
-        if (structural) { this._rows = null; this._renderDialogBody(); }
-      },
-    );
-    this._form.data = { choices_source: "static", show_selector: false, ...c };
-    body.appendChild(this._form);
-    if (c.show_selector && (c.choices_source || "static") === "static") {
-      const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = "Choices"; body.appendChild(sub);
-      this._wrap = document.createElement("div"); body.appendChild(this._wrap);
-      this._rows = null;
-      this._renderChoices();
-    } else if (c.show_selector) {
-      const items = resolveChoices(this._hass, c);
-      const hint = document.createElement("div"); hint.className = "hint";
-      hint.textContent = items.length ? `${items.length} choice${items.length === 1 ? "" : "s"} now: ${items.slice(0, 12).map((i) => i.label).join(", ")}${items.length > 12 ? "…" : ""}`
-        : "No choices yet — pick an entity and an attribute that holds a list or a dictionary.";
-      body.appendChild(hint);
-    }
-  }
-
-  _bodyCard(body) {
-    const c = this._config;
-    const links = document.createElement("div"); links.className = "links";
-    const link = (text, fn) => { const a = document.createElement("span"); a.textContent = text; a.addEventListener("click", fn); return a; };
-    if (c.card) {
-      links.append(
-        link("Change card type", () => { this._set({ card: undefined }); this._cardEd = null; this._noCard = false; this._renderDialogBody(); }),
-        link("No card (dropdown only)", () => { const { card, ...rest } = this._config; this._config = { ...rest, show_selector: true }; this._emit(); this._cardEd = null; this._noCard = true; this._renderDialogBody(); }),
-      );
-    } else if (this._noCard || (!c.card && c.show_selector && this._noCard !== false)) {
-      links.append(link("Wrap a card", () => { this._noCard = false; this._renderDialogBody(); }));
-    }
-    body.appendChild(links);
-    if (!c.show_selector && c.card) {
-      this._form = this._mkForm([{ name: "show_value", selector: { boolean: {} } }],
-        { show_value: "Show the current value with a clear (✕) button" },
-        { show_value: "A small header above the wrapped card. Leave off when several sockets share one knob." },
-        (v) => this._set(v));
-      body.appendChild(this._form);
-    }
-    this._cardBox = document.createElement("div");
-    body.appendChild(this._cardBox);
-    if (c.card || !(this._noCard || (c.show_selector && this._noCard !== false))) this._renderCardEditor();
-    else { const h = document.createElement("div"); h.className = "hint"; h.textContent = "This card is a dropdown only."; this._cardBox.appendChild(h); }
-  }
-
-  _input(value, placeholder, flex, onInput) {
+  _input(value, placeholder, onInput) {
     const el = document.createElement("input");
     el.type = "text";
     el.value = value || "";
     el.placeholder = placeholder;
     el.autocomplete = "off";
-    el.style.cssText =
-      `flex:${flex}; min-width:0; box-sizing:border-box; font:inherit; color:var(--primary-text-color);` +
-      "background:var(--mdc-text-field-fill-color, rgba(127,127,127,.12));" +
-      "border:none; border-bottom:1px solid var(--divider-color);" +
-      "border-radius:4px 4px 0 0; padding:12px 10px; outline-color:var(--primary-color);";
     el.addEventListener("input", onInput);
     return el;
   }
 
-  // Choice rows rebuild only on add/delete so typing never loses focus.
-  _renderChoices() {
-    const items = this._config.choices || [];
+  // One row per parameter: name, key, default. Rows rebuild only on
+  // add/remove so typing never loses focus.
+  _bodyParameters(body) {
+    const ps = this._params();
+    const hint = document.createElement("div"); hint.className = "hint";
+    hint.innerHTML = `Each parameter is one <b>$name$</b> in the wrapped card and one <b>key</b> in the URL. Cards sharing a key share that value — copy the key into the other cards. Up to ${MAX_PARAMS}.`;
+    body.appendChild(hint);
+    const head = document.createElement("div"); head.className = "prow";
+    head.innerHTML = `<span class="sub" style="flex:1">Name</span><span class="sub" style="flex:1">Key</span><span class="sub" style="flex:1">Default</span><span style="width:34px"></span>`;
+    body.appendChild(head);
+    ps.forEach((p, i) => {
+      const row = document.createElement("div"); row.className = "prow";
+      const name = this._input(p.name, "name", () => this._setParam(i, { name: name.value.trim() }));
+      const key = this._input(p.key, "key", () => this._setParam(i, { key: key.value.trim() }));
+      const def = this._input(p.default, "empty", () => this._setParam(i, { default: def.value }));
+      const del = document.createElement("ha-icon"); del.icon = "mdi:delete-outline"; del.className = "del"; del.title = ps.length > 1 ? "Remove" : "A card needs at least one parameter";
+      if (ps.length > 1) del.addEventListener("click", () => { this._set({ parameters: ps.filter((_, n) => n !== i) }); this._tab = 0; this._renderDialogBody(); });
+      else del.style.opacity = ".3";
+      row.append(name, key, def, del);
+      body.appendChild(row);
+    });
+    const add = document.createElement("div");
+    add.style.cssText = "display:inline-flex; align-items:center; gap:4px; padding:2px 4px 10px;";
+    if (ps.length < MAX_PARAMS) {
+      add.className = "link";
+      add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Add parameter`;
+      add.addEventListener("click", () => {
+        const n = ps.length + 1;
+        this._set({ parameters: [...ps, { name: `p${n}`, key: newKey(), dropdown: false }] });
+        this._renderDialogBody();
+        body.querySelectorAll(".prow input")[(ps.length) * 3]?.focus();
+      });
+    } else {
+      add.className = "hint";
+      add.textContent = `That is the limit — ${MAX_PARAMS} parameters.`;
+    }
+    body.appendChild(add);
+  }
+
+  _tabsHtml() {
+    return `<div class="tabs">${this._params().map((p, i) => `<span class="${i === this._tab ? "on" : ""}" data-i="${i}">$${esc(p.name)}$${p.dropdown ? " ▾" : ""}</span>`).join("")}</div>`;
+  }
+
+  _wireTabs(body) {
+    body.querySelectorAll(".tabs span").forEach((t) => t.addEventListener("click", () => { this._tab = Number(t.dataset.i); this._renderDialogBody(); }));
+  }
+
+  _bodyDropdowns(body) {
+    const ps = this._params();
+    if (ps.length > 1) { body.insertAdjacentHTML("beforeend", this._tabsHtml()); this._wireTabs(body); }
+    const i = Math.min(this._tab, ps.length - 1); this._tab = i;
+    const p = ps[i];
+    const schema = [
+      { name: "dropdown", selector: { boolean: {} } },
+      ...(p.dropdown ? [
+        { name: "title", selector: { text: {} } },
+        { name: "placeholder", selector: { text: {} } },
+        { name: "choices_source", selector: { select: { mode: "dropdown", options: [
+            { value: "static", label: "Typed in below" }, { value: "entity", label: "From an entity attribute" } ] } } },
+        ...(p.choices_source === "entity" ? this._dynamicSchema(p) : []),
+        { name: "all_label", selector: { text: {} } },
+      ] : []),
+    ];
+    this._form = this._mkForm(schema, { choices_source: "static", dropdown: false, ...p },
+      { dropdown: `Show a dropdown for $${p.name}$ (this card is its knob)`, title: "Label", placeholder: "Placeholder (before a choice)",
+        choices_source: "Choices", source_entity: "Entity", source_attribute: "Attribute",
+        source_label_field: "Label field", source_value_field: "Value field", all_label: "Extra “show all” choice" },
+      { dropdown: "Off: for this parameter the card is a silent socket and takes its choices from the knob sharing the key.",
+        choices_source: "Typed in, or read live from an entity attribute (a dictionary contributes its keys, a list its entries).",
+        all_label: "Optional first choice that clears the value, e.g. “All lines”." },
+      (v) => {
+        const cur = this._params()[i];
+        const structural = v.dropdown !== !!cur.dropdown || v.choices_source !== (cur.choices_source || "static") ||
+          v.source_entity !== cur.source_entity || v.source_attribute !== cur.source_attribute;
+        const { name, key, default: d, choices, ...rest } = v;      // the form never owns those
+        this._setParam(i, rest);
+        if (structural) { this._rows = null; this._renderDialogBody(); }
+      },
+    );
+    body.appendChild(this._form);
+    if (p.dropdown && (p.choices_source || "static") === "static") {
+      const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = "Choices"; body.appendChild(sub);
+      this._wrap = document.createElement("div"); body.appendChild(this._wrap);
+      this._rows = null;
+      this._renderChoices(i);
+    } else if (p.dropdown) {
+      const items = resolveChoices(this._hass, p);
+      const h = document.createElement("div"); h.className = "hint";
+      h.textContent = items.length ? `${items.length} choice${items.length === 1 ? "" : "s"} now: ${items.slice(0, 12).map((x) => x.label).join(", ")}${items.length > 12 ? "…" : ""}`
+        : "No choices yet — pick an entity and an attribute that holds a list or a dictionary.";
+      body.appendChild(h);
+    }
+  }
+
+  // Choice rows for parameter i; rebuild only on add/delete so typing never loses focus.
+  _renderChoices(i) {
+    const p = this._params()[i];
+    const items = p.choices || [];
     if (this._rows && this._rows.length === items.length) return;
     this._wrap.innerHTML = "";
     this._rows = [];
-    const commit = () => { this._emit(); this._renderOverview(); };
-    items.forEach((item, i) => {
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex; align-items:center; gap:6px; margin-bottom:8px;";
-      const label = this._input(item.label, "Display text", "1", () => {
-        this._config.choices[i] = { ...this._config.choices[i], label: label.value }; commit();
-      });
-      const val = this._input(item.value, "Value ($parameter$)", "1.4", () => {
-        this._config.choices[i] = { ...this._config.choices[i], value: val.value }; commit();
-      });
-      const del = document.createElement("ha-icon");
-      del.icon = "mdi:delete-outline";
-      del.title = "Remove";
-      del.style.cssText = "cursor:pointer; color:var(--secondary-text-color); padding:6px;";
-      del.addEventListener("click", () => {
-        this._config = { ...this._config, choices: items.filter((_, n) => n !== i) };
-        this._rows = null; this._renderChoices(); commit();
-      });
+    const setChoices = (choices) => this._setParam(i, { choices });
+    items.forEach((item, k) => {
+      const row = document.createElement("div"); row.className = "prow";
+      const label = this._input(item.label, "Display text", () => setChoices(items.map((c, n) => (n === k ? { ...c, label: label.value } : c))));
+      const val = this._input(item.value, `Value ($${p.name}$)`, () => setChoices(items.map((c, n) => (n === k ? { ...c, value: val.value } : c))));
+      const del = document.createElement("ha-icon"); del.icon = "mdi:delete-outline"; del.className = "del"; del.title = "Remove";
+      del.addEventListener("click", () => { setChoices(items.filter((_, n) => n !== k)); this._rows = null; this._renderChoices(i); });
       row.append(label, val, del);
       this._wrap.appendChild(row);
       this._rows.push(row);
     });
-    const add = document.createElement("div");
-    add.style.cssText = "display:inline-flex; align-items:center; gap:4px; cursor:pointer; color:var(--primary-color); padding:2px 4px 10px;";
+    const add = document.createElement("div"); add.className = "link";
+    add.style.cssText = "display:inline-flex; align-items:center; gap:4px; padding:2px 4px 10px;";
     add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Add choice`;
     add.addEventListener("click", () => {
-      this._config = { ...this._config, choices: [...(this._config.choices || []), { label: "", value: "" }] };
-      this._rows = null; this._renderChoices(); commit();
+      setChoices([...items, { label: "", value: "" }]);
+      this._rows = null; this._renderChoices(i);
       this._wrap.querySelector("div:nth-last-child(2) input")?.focus();
     });
     this._wrap.appendChild(add);
+  }
+
+  _bodyCard(body) {
+    const c = this._config;
+    const anyKnob = this._params().some((p) => p.dropdown);
+    const links = document.createElement("div"); links.className = "links";
+    const link = (text, fn) => { const a = document.createElement("span"); a.textContent = text; a.addEventListener("click", fn); return a; };
+    if (c.card) {
+      links.append(
+        link("Change card type", () => { this._set({ card: undefined }); this._cardEd = null; this._noCard = false; this._renderDialogBody(); }),
+        link("No card (dropdown only)", () => { const { card, ...rest } = this._config; this._config = rest; this._emit(); this._cardEd = null; this._noCard = true; this._renderDialogBody(); }),
+      );
+    } else if (this._noCard || (anyKnob && this._noCard !== false)) {
+      links.append(link("Wrap a card", () => { this._noCard = false; this._renderDialogBody(); }));
+    }
+    body.appendChild(links);
+    if (c.card && !this._params().every((p) => p.dropdown)) {
+      this._form = this._mkForm([{ name: "show_value", selector: { boolean: {} } }], { show_value: false, ...c },
+        { show_value: "Show the current value(s) with a clear (✕) button" },
+        { show_value: "A small header above the wrapped card. Leave off when several sockets share one knob." },
+        (v) => this._set({ show_value: !!v.show_value }));
+      body.appendChild(this._form);
+    }
+    this._cardBox = document.createElement("div");
+    body.appendChild(this._cardBox);
+    if (c.card || !(this._noCard || (anyKnob && this._noCard !== false))) this._renderCardEditor();
+    else { const h = document.createElement("div"); h.className = "hint"; h.textContent = "This card is a dropdown only."; this._cardBox.appendChild(h); }
   }
 
   async _renderCardEditor() {
@@ -790,12 +873,12 @@ class SbParamCardEditor extends HTMLElement {
     }
   }
 
-  _dynamicSchema() {
-    const st = this._hass?.states?.[this._config.source_entity];
+  _dynamicSchema(p) {
+    const st = this._hass?.states?.[p.source_entity];
     const attrs = Object.keys(st?.attributes || {}).filter(
       (k) => !["friendly_name", "icon", "device_class", "unit_of_measurement", "state_class"].includes(k)
     );
-    const raw = st?.attributes?.[this._config.source_attribute];
+    const raw = st?.attributes?.[p.source_attribute];
     const objFields = Array.isArray(raw) && raw[0] && typeof raw[0] === "object" ? Object.keys(raw[0]) : [];
     const fieldSel = (name) => ({
       name, selector: { select: { mode: "dropdown", options: objFields.map((f) => ({ value: f, label: f })) } },
@@ -804,7 +887,7 @@ class SbParamCardEditor extends HTMLElement {
       { name: "source_entity", selector: { entity: {} } },
       { name: "source_attribute", selector: { select: { mode: "dropdown",
           options: attrs.length ? attrs.map((a) => ({ value: a, label: a }))
-            : [{ value: this._config.source_attribute || "", label: "(pick an entity first)" }] } } },
+            : [{ value: p.source_attribute || "", label: "(pick an entity first)" }] } } },
       ...(objFields.length ? [fieldSel("source_label_field"), fieldSel("source_value_field")] : []),
     ];
   }
@@ -817,7 +900,7 @@ window.customCards.push({
   type: CARD,
   name: "SB Param Card",
   description:
-    "A runtime parameter shared through the URL: a dropdown (the knob), a wrapped card with $name$ substituted (a socket), or both — one card plus a dropdown instead of one card per value.",
+    "Runtime parameters shared through the URL: dropdowns (the knob), a wrapped card with $name$ substituted (a socket), or both — one card plus a dropdown instead of one card per value.",
   preview: false,
   documentationURL: "https://github.com/snadboy/sb-param-card",
 });

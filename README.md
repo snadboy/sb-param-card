@@ -52,18 +52,47 @@ focused dialog. Edits apply live to the preview; *Cancel* restores.
 
 ## Options
 
-| Option | Meaning |
+A card holds up to **8 parameters**. Each is one `$name$` in the wrapped card
+and one key in the URL:
+
+```yaml
+type: custom:sb-param-card
+parameters:
+  - name: line            # $line$
+    key: metra-line       # URL ?seb-metra-line=…  — cards sharing it share the value
+    default: UP-W
+    dropdown: true        # this card is the knob for $line$
+    title: Line
+    choices_source: entity
+    source_entity: sensor.metra_schedule
+    source_attribute: lines
+  - name: dir             # $dir$ — a second dropdown on the same card
+    key: metra-dir
+    dropdown: true
+    choices: [{label: Inbound, value: inbound}, {label: Outbound, value: outbound}]
+card:
+  type: markdown
+  content: "{{ metra_timetable_grid('$line$', '$dir$') }}"
+```
+
+| Per parameter | Meaning |
 |---|---|
-| `storage_id` | The **key**: cards sharing it share the value (URL `seb-<key>`). Auto-generated; copy it to the other cards |
-| `parameter` | The name used in `$name$` (default `value`) |
-| `show_selector` | This card draws the dropdown — it is the knob |
-| `title` / `placeholder` | Dropdown label and its "nothing chosen" text (knob) |
-| `choices` | The knob's choices: `label` + `value` per row |
-| `choices_source` | `static` (default) or `entity` — choices read live from an entity attribute (`source_entity` / `source_attribute`; a dictionary contributes its keys, a list its entries) |
+| `name` | The name used in `$name$` |
+| `key` | The URL key (`seb-<key>`); auto-generated, copy it into the other cards |
+| `default` | Value before a choice is made, or when a link carries a value the knob does not offer. A socket without one follows the knob's default; with none anywhere the parameter is empty |
+| `dropdown` | This card draws the dropdown for this parameter — it is the knob |
+| `title` / `placeholder` | Dropdown label and its "nothing chosen" text |
+| `choices` | Typed choices: `label` + `value` per row |
+| `choices_source` | `static` (default) or `entity` — choices read live from `source_entity` / `source_attribute` (a dictionary contributes its keys, a list its entries) |
 | `all_label` | Optional first choice that clears the value, e.g. "All lines" |
-| `default` | Value used before a choice is made, or when a link carries a value the knob does not offer. With no default the parameter is empty |
+
+| Card | Meaning |
+|---|---|
 | `card` | The wrapped card config (any card; `$name$` anywhere in it) |
-| `show_value` | Socket only: a one-line header with the current value and a ✕ that clears it |
+| `show_value` | Socket only: a one-line header with each parameter's current value and a ✕ that clears it |
+
+The 0.5.x single-parameter shape (`parameter`, `storage_id`, `show_selector`, …) is still read.
+
 
 
 On a value change the wrapped card is rebuilt (HA cards are not built to be
