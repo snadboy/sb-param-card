@@ -318,3 +318,20 @@ Overview reads "2 of HA's areas (only these)" vs "all 60 of HA's labels".
 A URL value outside the subset is dropped like any non-choice
 (`?seb-combo-area=kitchen,backyard` → [kitchen]). Demo ⑥'s Areas is
 restricted to three.
+
+## v0.10.1 — "no entities match" on a label dropdown (2026-09-24)
+
+User's Home-view card: a labels knob (`only: [matter_hub, matter_relay]`)
+over a browser → 0 rows. Three causes, read from the live config: (1) the
+parameter had NO `apply` — the dropdown fed nothing (the overview said
+"$p2$ unused", in the group the screenshot cut off); (2) the browser's own
+base pattern was `hub` (my `filter: hub` → `patterns: [hub]` rewire of the
+day before) and the Nest plugs carrying the label have no "hub" in their
+names; (3) `___no_items_available___` in the browser's `labels` — HA's
+label picker emits that placeholder when its list is empty.
+Fixes: `only` and (EB 0.14.1) `labels`/`areas` drop `___*` placeholders;
+choosing an areas/labels/floors source in the editor now DEFAULTS
+`apply: {field: <that>, mode: set}` when nothing consumes the parameter; the
+Dropdowns dialog says where the value goes ("Value goes to the wrapped
+card's `labels` field") or warns that nothing uses it. Verified in the real
+editor (`autoapply_test.js`). The `hub` pattern is the user's to remove.

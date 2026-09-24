@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.10.0";
+const VERSION = "0.10.1";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -137,7 +137,8 @@ const resolveChoices = (hass, config) => {
   if (REGISTRY_SOURCES.has(config.choices_source)) {
     out = registryChoices(hass, config.choices_source);
     // `only`: restrict a registry source to a picked subset (ids); empty = any.
-    const only = (config.only || []).map(String).filter(Boolean);
+    // HA's pickers emit "___no_items_available___" when their list is empty; never treat it as an id.
+    const only = (config.only || []).map(String).filter((v) => v && !v.startsWith("___"));
     if (only.length) out = out.filter((i) => only.includes(i.value));
   } else if (config.choices_source === "entity") {
     const st = hass?.states?.[config.source_entity];
@@ -998,7 +999,13 @@ class SbParamCardEditor extends HTMLElement {
         const structural = v.dropdown !== !!cur.dropdown || v.multiple !== !!cur.multiple || v.choices_source !== (cur.choices_source || "static") ||
           v.source_entity !== cur.source_entity || v.source_attribute !== cur.source_attribute;
         const { name, key, default: d, choices, ...rest } = v;      // the form never owns those
-        if (Array.isArray(rest.only) && !rest.only.length) rest.only = undefined;
+        if (Array.isArray(rest.only)) { rest.only = rest.only.filter((x) => x && !String(x).startsWith("___")); if (!rest.only.length) rest.only = undefined; }
+        // An area/label/floor dropdown almost always means "filter the wrapped
+        // card by it": default the apply to that field unless the parameter is
+        // already consumed somewhere (a $token$ in the card, or an apply).
+        const FIELD = { areas: "areas", labels: "labels", floors: "floors" };
+        if (FIELD[rest.choices_source] && rest.choices_source !== cur.choices_source && !cur.apply && !(tokenUsage(this._config.card)[cur.name]))
+          rest.apply = { field: FIELD[rest.choices_source], mode: "set" };
         this._setParam(i, rest);
         if (structural) { this._rows = null; this._renderDialogBody(); }
       },
@@ -1009,7 +1016,16 @@ class SbParamCardEditor extends HTMLElement {
       this._wrap = document.createElement("div"); body.appendChild(this._wrap);
       this._rows = null;
       this._renderChoices(i);
-    } else if (p.dropdown) {
+    }
+    if (p.dropdown) {
+      const used = !!tokenUsage(this._config.card)[p.name], ap = p.apply?.field;
+      const where = document.createElement("div"); where.className = "hint";
+      where.innerHTML = ap ? `Value goes to the wrapped card's <code>${esc(ap)}</code> field (${p.apply.mode === "append" ? "append" : "replace"}) — change under <i>Wrapped card</i>.`
+        : used ? `Value goes wherever <code>$${esc(p.name)}$</code> appears in the wrapped card.`
+        : this._config.card ? `<span class="warn">Nothing uses <code>$${esc(p.name)}$</code> yet: write it into the wrapped card, or set <i>Apply parameters to fields</i> under <i>Wrapped card</i>.</span>` : "";
+      if (where.innerHTML) body.appendChild(where);
+    }
+    if (p.dropdown && !((p.choices_source || "static") === "static")) {
       if (REGISTRY_SOURCES.has(p.choices_source)) fetchLabels(this._hass);
       const items = resolveChoices(this._hass, p);
       const h = document.createElement("div"); h.className = "hint";
