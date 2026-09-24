@@ -88,6 +88,7 @@ card:
 
 | Card | Meaning |
 |---|---|
+| `text` | Markdown or a Jinja template shown above the dropdowns — and with none, as a caption over a silent socket. Every `$name$` is substituted first, then Jinja is rendered live |
 | `card` | The wrapped card config (any card; `$name$` anywhere in it) |
 | `show_value` | Socket only: a one-line header with each parameter's current value and a ✕ that clears it |
 

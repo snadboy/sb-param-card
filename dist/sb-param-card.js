@@ -19,13 +19,14 @@
  * Config (0.6.0):
  *   parameters: [{ name, key, default, dropdown, title, placeholder,
  *                  choices | choices_source/source_entity/source_attribute, all_label }]
+ *   text — markdown / Jinja shown above the dropdowns (and with none), $name$ substituted first
  *   card, show_value
  * The 0.5.x single-parameter shape (parameter, storage_id, show_selector, …)
  * is still read and folded into one entry.
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.6.1";
+const VERSION = "0.7.0";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -162,6 +163,10 @@ const STYLE = `
      dark themes get light-gray text on a white popup. */
   .sbp-knob option { background: var(--card-background-color, Canvas); color: var(--primary-text-color, CanvasText); }
   .sbp-knob .warn { color: var(--warning-color, orange); font-size: .85em; }
+  .sbp-knob .sbp-text { color: var(--primary-text-color); }
+  .sbp-knob .sbp-text ha-markdown { display: block; }
+  .sbp-knob .sbp-text ha-markdown p:first-child { margin-top: 0; }
+  .sbp-knob .sbp-text ha-markdown p:last-child { margin-bottom: 0; }
   .sbp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 6px 16px; font-size: .85em; color: var(--secondary-text-color); }
   .sbp-bar b { color: var(--primary-text-color); }
   .sbp-bar .sbp-clear { cursor: pointer; color: var(--primary-color); margin-left: 4px; }
@@ -187,6 +192,7 @@ class SbParamCard extends HTMLElement {
     this._child = null;
     this._childType = null;
     this._lastSig = undefined;
+    this._unsubText();
     this._sel?.remove(); this._sel = null; this._selSig = null;
     this._bar?.remove(); this._bar = null;
     this.querySelectorAll(":scope > ha-card.sbp-error").forEach((n) => n.remove());
@@ -206,7 +212,7 @@ class SbParamCard extends HTMLElement {
   }
 
   getCardSize() {
-    return (this._knobs().length ? 1 : 0) + (this._child?.getCardSize?.() ?? (this._config?.card ? 3 : 0));
+    return ((this._knobs().length || this._config?.text) ? 1 : 0) + (this._child?.getCardSize?.() ?? (this._config?.card ? 3 : 0));
   }
 
   connectedCallback() {
@@ -235,6 +241,7 @@ class SbParamCard extends HTMLElement {
       const key = `seb-${p.key}`;
       if (KNOBS.get(key)?.el === this) { KNOBS.delete(key); announce(key); }
     }
+    this._unsubText();
   }
 
   _params() { return this._config?.parameters || []; }
@@ -312,11 +319,16 @@ class SbParamCard extends HTMLElement {
     fire(this, "location-changed", {});
   }
 
+  // The head block: optional TEXT (markdown or a Jinja template, with every
+  // $name$ substituted first), then one dropdown row per knob parameter. It
+  // exists when either is configured, so a silent socket can still carry a
+  // caption above the card it wraps.
   _renderSelector(force = false) {
     const knobs = this._knobs();
-    if (!knobs.length) { this._sel?.remove(); this._sel = null; return; }
+    const text = String(this._config.text ?? "").trim();
+    if (!knobs.length && !text) { this._unsubText(); this._sel?.remove(); this._sel = null; return; }
     const rows = knobs.map((p) => ({ p, items: this._items(p), value: this._valueOf(p), live: this._live(p) }));
-    const sig = rows.map((r) => choicesSignature(r.items) + "\u0001" + r.value + "\u0001" + (r.live == null)).join("\u0002");
+    const sig = rows.map((r) => choicesSignature(r.items) + "\u0001" + r.value + "\u0001" + (r.live == null)).join("\u0002") + "\u0004" + text;
     if (this._sel && this._selSig === sig && !force) return;
     this._selSig = sig;
     if (!this._sel) {
@@ -325,7 +337,7 @@ class SbParamCard extends HTMLElement {
       const style = this.querySelector(":scope > style");
       style ? style.after(this._sel) : this.prepend(this._sel);
     }
-    this._sel.innerHTML = rows.map(({ p, items, value, live }, n) => {
+    this._sel.innerHTML = (text ? `<div class="sbp-text"><ha-markdown breaks></ha-markdown></div>` : "") + rows.map(({ p, items, value, live }, n) => {
       const cur = items.findIndex((i) => i.value === value);
       // Placeholder until a choice is made; a default counts as a choice only
       // when it is one of the items (then the dropdown shows it).
@@ -345,6 +357,33 @@ class SbParamCard extends HTMLElement {
         if (item) this._pick(r.p, item.value);
       });
     });
+    if (text) this._renderText(text);
+  }
+
+  // Text is substituted ($name$ → value) and then, if it contains Jinja,
+  // rendered live by HA over a render_template subscription — exactly what
+  // the markdown card does. Plain text is shown as markdown immediately.
+  _renderText(raw) {
+    let src = raw;
+    for (const [name, value] of Object.entries(this._values())) src = substitute(src, name, value);
+    const md = this._sel?.querySelector(".sbp-text ha-markdown");
+    if (!md) return;
+    if (!/\{\{|\{%/.test(src)) { this._unsubText(); md.content = src; return; }
+    if (this._textSrc === src && this._textUnsub) return;
+    this._unsubText();
+    this._textSrc = src;
+    md.content = "…";
+    const conn = this._hass?.connection;
+    if (!conn) return;
+    conn.subscribeMessage((msg) => { if (this._textSrc === src) md.content = String(msg.result ?? ""); },
+      { type: "render_template", template: src, timeout: 3, report_errors: true })
+      .then((unsub) => { if (this._textSrc === src) this._textUnsub = unsub; else unsub(); })
+      .catch((err) => { if (this._textSrc === src) md.content = `⚠ ${err?.message || err}`; });
+  }
+
+  _unsubText() {
+    if (this._textUnsub) { try { this._textUnsub(); } catch (e) { /* gone */ } }
+    this._textUnsub = null; this._textSrc = null;
   }
 
   // Optional header for a SOCKET: every parameter that has a URL value, each
@@ -404,7 +443,7 @@ class SbParamCard extends HTMLElement {
 
   async _update() {
     if (!this._hass || !this._config) return;
-    if (!this._knobs().length && !this._config.card) {
+    if (!this._knobs().length && !this._config.card && !String(this._config.text ?? "").trim()) {
       this._error("turn on a dropdown, wrap a card, or both");
       return;
     }
@@ -416,6 +455,7 @@ class SbParamCard extends HTMLElement {
 
     const values = this._values();
     const sig = JSON.stringify(values);
+    if (this._config.text && sig !== this._lastTextSig) { this._lastTextSig = sig; this._renderText(String(this._config.text)); }
     if (this._child && sig === this._lastSig) {
       this._child.hass = this._hass;
       return;
@@ -590,15 +630,17 @@ class SbParamCardEditor extends HTMLElement {
 
   _summaryDropdowns() {
     const knobs = this._params().filter((p) => p.dropdown);
-    if (!knobs.length) return [["Dropdowns", `<span class="off">none — choices come from the knobs sharing the keys</span>`]];
-    return knobs.map((p) => {
+    const t = String(this._config.text ?? "").trim();
+    const textRow = ["Text above", t ? `<code>${esc(t.length > 60 ? t.slice(0, 60) + "…" : t)}</code>${/\{\{|\{%/.test(t) ? `<span class="chip">Jinja</span>` : ""}` : `<span class="off">none</span>`];
+    if (!knobs.length) return [textRow, ["Dropdowns", `<span class="off">none — choices come from the knobs sharing the keys</span>`]];
+    return [textRow, ...knobs.map((p) => {
       const items = resolveChoices(this._hass, p);
       const src = p.choices_source === "entity"
         ? `${items.length} from <code>${esc(p.source_entity || "?")}</code> · ${esc(p.source_attribute || "?")}`
         : items.length ? `${items.length}: ${esc(items.slice(0, 4).map((i) => i.label).join(", "))}${items.length > 4 ? "…" : ""}`
         : `<span class="warn">no choices yet</span>`;
       return [`<code>$${esc(p.name)}$</code>${p.title ? ` “${esc(p.title)}”` : ""}`, src];
-    });
+    })];
   }
 
   _summaryCard() {
@@ -752,6 +794,13 @@ class SbParamCardEditor extends HTMLElement {
 
   _bodyDropdowns(body) {
     const ps = this._params();
+    // Card-level text first: it sits above every dropdown and shows even
+    // when this card has none (a caption over a silent socket).
+    const tf = this._mkForm([{ name: "text", selector: { text: { multiline: true } } }], { text: this._config.text || "" },
+      { text: "Text above the dropdowns" },
+      { text: "Markdown, or a Jinja template rendered live. Every $name$ is substituted first, so “Line **$line$**” works. Shown even when this card has no dropdown." },
+      (v) => this._set({ text: v.text }));
+    body.appendChild(tf);
     if (ps.length > 1) { body.insertAdjacentHTML("beforeend", this._tabsHtml()); this._wireTabs(body); }
     const i = Math.min(this._tab, ps.length - 1); this._tab = i;
     const p = ps[i];

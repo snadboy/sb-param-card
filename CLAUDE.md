@@ -219,3 +219,19 @@ shadow (custom properties inherit INTO the wrapped card's ha-card — the one
 way to style it from outside). `--sbp-radius` is captured on the host from
 `--ha-card-border-radius` before the child overrides it. Bare knob (no card)
 and bare socket are unchanged.
+
+## v0.7.0 — `text` above the dropdowns (2026-09-23)
+
+User request: text (string or Jinja) above the dropdown, shown even when
+there is no dropdown. `text` lives in the head block (`ha-card.sbp-knob`)
+before the dropdown rows; the head now exists when EITHER text or a knob
+parameter is present, so a silent socket can carry a caption. Rendering:
+`$name$` substituted first, then — if the string contains `{{` / `{%` — a
+`render_template` WebSocket subscription (what the markdown card does),
+output into an `ha-markdown`; plain text goes straight to `ha-markdown`.
+The subscription is re-made when the substituted source changes
+(`_textSrc`) and dropped on disconnect / setConfig. `_update` re-renders the
+text when the values signature changes even if the child is kept. Editor:
+the field sits at the top of the Dropdowns dialog; the overview's Dropdowns
+group shows "Text above" (with a Jinja chip). A card with only `text` is
+allowed (a caption card).
