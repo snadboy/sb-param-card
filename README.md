@@ -67,6 +67,7 @@ none it narrows. Pick the field knowing that.
 | `$line:lower$` | `up-w` |
 | `$line:upper$` | `UP-W` |
 | `$line:title$` | `Up-w` |
+| `$areas:json$` | `["kitchen","office"]` — a JSON array for a `multiple` parameter (a JSON string otherwise) |
 
 `:slug` follows Home Assistant's entity-id convention, so one choice can feed
 both a friendly name and an entity/source id.
@@ -109,6 +110,7 @@ card:
 | `key` | The URL key (`seb-<key>`); auto-generated, copy it into the other cards |
 | `default` | Value before a choice is made, or when a link carries a value the knob does not offer. A socket without one follows the knob's default; with none anywhere the parameter is empty |
 | `dropdown` | This card draws the dropdown for this parameter — it is the knob |
+| `multiple` | The dropdown is a list of **checkboxes** and the value is a list: `?seb-key=kitchen,office` in the URL, a real list when applied to a field (`areas: [kitchen, office]`), comma-joined in `$name$`, a JSON array via `$name:json$` for Jinja (`{% set a = $area:json$ %}`). Nothing ticked = nothing chosen (field left alone) |
 | `title` / `placeholder` | Dropdown label and its "nothing chosen" text |
 | `choices` | Typed choices: `label` + `value` per row |
 | `choices_source` | `static` (default), `entity` — choices read live from `source_entity` / `source_attribute` (a dictionary contributes its keys, a list its entries) — or `areas` / `labels` / `floors`, straight from HA's registries (label = name, value = id) |

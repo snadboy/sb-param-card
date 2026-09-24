@@ -275,3 +275,23 @@ while a `select` inside it has focus (`_selDirty` → catch up on blur).
 Measured: 51 hass ticks with the area select focused, same element, still
 focused. General rule for any card: never rebuild a native control from a
 hass setter unless its content changed, and never while it is focused.
+
+## v0.9.0 — `multiple`: a dropdown of checkboxes (2026-09-24)
+
+User: areas and labels need several selections. Per parameter `multiple:
+true`: the knob renders a custom control (`.msel`: a button that reads like
+a select + an absolutely positioned `.mpanel` of checkboxes with Clear /
+Done) — a native `<select multiple>` is unusable on a dashboard. Ticks apply
+LIVE (each change → `_pick(p, list)`), the panel stays open (the head's
+"never rebuild while in use" guard now also checks `.mpanel.open`), closes
+on Done / outside click. Value model: `_valueOf` returns a list (URL
+`a,b`, `_splitList`, only offered choices kept; `[]` = nothing chosen);
+`transform` joins lists with "," and `:json` gives a JSON array;
+`applyField` writes the list (set) or concatenates (append); an empty list
+leaves the field alone. The registry entry carries `multiple` so a silent
+socket parses the URL the same way. Editor: "Allow several choices" toggle
+under the dropdown switch; overview chip "multi". Demo ⑤ is multiple now
+with a silent socket showing `$area$` and `$area:json$` in Jinja
+(`multi_test.js`: kitchen → office ticked live, builtAreas [kitchen,office],
+1 → 13 rows, panel survives 6 s of hass ticks, bogus URL entry dropped,
+Clear → 76 rows).

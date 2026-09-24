@@ -21,6 +21,11 @@
  *                  choices | choices_source/source_entity/source_attribute, all_label }]
  *   text — markdown / Jinja shown above the dropdowns (and with none), $name$ substituted first
  *   card, show_value
+ * A parameter with `multiple: true` is a dropdown of CHECKBOXES: its value is
+ * a list — `?seb-key=kitchen,office` in the URL, a real list when applied to
+ * a field (`areas: [kitchen, office]`), comma-joined in `$name$`, and a JSON
+ * array through `$name:json$` for Jinja.
+ *
  * Besides $name$ substitution, a parameter can be APPLIED TO A FIELD of the
  * wrapped card behind the scenes — `apply: {field: "areas", mode: "append"}`
  * writes the value into that field at build time, so an existing card is
@@ -32,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.8.2";
+const VERSION = "0.9.0";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -56,8 +61,12 @@ const esc = (v) =>
 
 // $name$ with optional :transform — :slug matches the integration's rule so
 // "UP-W" lands as up_w wherever an entity/source id is needed.
-const TOKEN = /\$([a-zA-Z_][\w-]*)(?::(slug|lower|upper|title))?\$/g;
+const TOKEN = /\$([a-zA-Z_][\w-]*)(?::(slug|lower|upper|title|json))?\$/g;
 const transform = (value, how) => {
+  // A list (multiple: true) joins with commas; :json gives a JSON array so a
+  // Jinja template can take it as a real list.
+  if (Array.isArray(value)) return how === "json" ? JSON.stringify(value) : value.map((v) => transform(v, how)).join(",");
+  if (how === "json") return JSON.stringify(String(value ?? ""));
   const s = String(value ?? "");
   if (how === "slug") return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (how === "lower") return s.toLowerCase();
@@ -79,10 +88,11 @@ const applyField = (card, path, value, mode) => {
     node = node[k];
   }
   const last = keys[keys.length - 1];
+  const vals = Array.isArray(value) ? value : [value];
   if (mode === "append") {
     const cur = node[last];
-    node[last] = Array.isArray(cur) ? [...cur, value] : cur == null || cur === "" ? [value] : [cur, value];
-  } else node[last] = value;
+    node[last] = Array.isArray(cur) ? [...cur, ...vals] : cur == null || cur === "" ? [...vals] : [cur, ...vals];
+  } else node[last] = Array.isArray(value) ? [...value] : value;
   return out;
 };
 
@@ -159,7 +169,7 @@ const choicesSignature = (items) => items.map((i) => i.label + "\u0000" + i.valu
 
 
 // ---- config shape -----------------------------------------------------------
-const PARAM_FIELDS = ["name", "key", "default", "dropdown", "title", "placeholder", "choices", "apply",
+const PARAM_FIELDS = ["name", "key", "default", "dropdown", "multiple", "title", "placeholder", "choices", "apply",
   "choices_source", "source_entity", "source_attribute", "source_label_field", "source_value_field",
   "source_sort", "all_label"];
 const newKey = () => "seb-" + Math.random().toString(36).slice(2, 8);
@@ -210,6 +220,21 @@ const STYLE = `
      dark themes get light-gray text on a white popup. */
   .sbp-knob option { background: var(--card-background-color, Canvas); color: var(--primary-text-color, CanvasText); }
   .sbp-knob .warn { color: var(--warning-color, orange); font-size: .85em; }
+  .sbp-knob .msel { flex: 1; min-width: 0; position: relative; }
+  .sbp-knob .mbtn { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; font: inherit; text-align: left;
+    color: var(--primary-text-color); background: var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border: none;
+    border-bottom: 1px solid var(--divider-color); border-radius: 4px 4px 0 0; padding: 10px 12px; cursor: pointer; }
+  .sbp-knob .mbtn.empty > span:first-child { color: var(--secondary-text-color); }
+  .sbp-knob .mbtn > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sbp-knob .mbtn .caret { color: var(--secondary-text-color); }
+  .sbp-knob .mpanel { display: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 20; max-height: 300px; overflow: auto;
+    background: var(--card-background-color, #fff); border: 1px solid var(--divider-color); border-radius: 0 0 8px 8px; box-shadow: 0 8px 24px rgba(0,0,0,.35); padding: 6px 0; }
+  .sbp-knob .mpanel.open { display: block; }
+  .sbp-knob .mpanel label { display: flex; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; color: var(--primary-text-color); }
+  .sbp-knob .mpanel label:hover { background: rgba(127,127,127,.12); }
+  .sbp-knob .mpanel input { accent-color: var(--primary-color); width: 16px; height: 16px; margin: 0; }
+  .sbp-knob .mfoot { display: flex; justify-content: flex-end; gap: 18px; padding: 8px 14px 4px; border-top: 1px solid var(--divider-color); margin-top: 4px; }
+  .sbp-knob .mfoot span { cursor: pointer; color: var(--primary-color); font-size: .9em; }
   .sbp-knob .sbp-text { color: var(--primary-text-color); }
   .sbp-knob .sbp-text ha-markdown { display: block; }
   .sbp-knob .sbp-text ha-markdown p:first-child { margin-top: 0; }
@@ -310,7 +335,7 @@ class SbParamCard extends HTMLElement {
       const prev = KNOBS.get(key);
       const sigd = sig + "\u0003" + (p.default ?? "");
       if (prev && prev.sig === sigd && (prev.el === this || prev.el.isConnected)) continue;   // same list already published by a live knob
-      KNOBS.set(key, { el: this, items, sig: sigd, default: p.default });
+      KNOBS.set(key, { el: this, items, sig: sigd, default: p.default, multiple: !!p.multiple });
       announce(key);
       changed = true;
     }
@@ -328,32 +353,58 @@ class SbParamCard extends HTMLElement {
     const push = (v) => { const s = String(v ?? ""); if (!out.includes(s)) out.push(s); };
     for (const i of this._items(p)) push(i.value);
     const def = this._default(p);
-    if (def != null) push(def);
+    if (Array.isArray(def)) def.forEach(push); else if (def != null) push(def);
     return out;
   }
 
   _labelFor(p, value) {
+    if (Array.isArray(value)) return value.map((v) => this._labelFor(p, v)).join(", ");
     return this._items(p).find((i) => String(i.value ?? "") === value)?.label || value;
+  }
+
+  // A multiple parameter's value is a list: "a,b" in the URL, a list in
+  // default, only the offered choices kept.
+  _splitList(raw) {
+    if (Array.isArray(raw)) return raw.map((v) => String(v ?? "").trim()).filter(Boolean);
+    return String(raw ?? "").split(",").map((v) => v.trim()).filter(Boolean);
   }
 
   _live(p) {
     try { return new URLSearchParams(location.search).get(`seb-${p.key}`); } catch (e) { return null; }
   }
 
-  _default(p) {
+  _rawDefault(p) {
     // A socket without a default of its own follows the knob's, so the knob
     // and its sockets show the same thing before anything is chosen.
-    if (p.default != null && p.default !== "") return String(p.default);
-    if (!p.dropdown) { const k = KNOBS.get(`seb-${p.key}`); if (k && k.default != null && k.default !== "") return String(k.default); }
+    if (p.default != null && p.default !== "" && !(Array.isArray(p.default) && !p.default.length)) return p.default;
+    if (!p.dropdown) { const k = KNOBS.get(`seb-${p.key}`); if (k && k.default != null && k.default !== "") return k.default; }
     return null;
+  }
+
+  _default(p) {
+    const d = this._rawDefault(p);
+    if (d == null) return null;
+    return p.multiple ? this._splitList(d) : Array.isArray(d) ? String(d[0] ?? "") : String(d);
+  }
+
+  _isMulti(p) {
+    return !!(p.multiple ?? KNOBS.get(`seb-${p.key}`)?.multiple);
   }
 
   _valueOf(p) {
     const url = this._live(p);
     const choices = this._choices(p);
+    if (this._isMulti(p)) {
+      // Keep only offered choices; a list with nothing left is "nothing chosen".
+      if (url != null) { const l = this._splitList(url).filter((v) => choices.includes(v)); if (l.length) return l; }
+      const def = this._default(p);
+      const dl = Array.isArray(def) ? def.filter((v) => choices.includes(v)) : [];
+      return dl;                                   // [] = nothing chosen
+    }
     if (url != null && choices.includes(url)) return url;
     const def = this._default(p);
-    if (def != null && choices.includes(def)) return def;
+    const ds = Array.isArray(def) ? def[0] : def;
+    if (ds != null && choices.includes(ds)) return ds;
     // Nothing chosen and no default anywhere: EMPTY — never silently the
     // first choice.
     return "";
@@ -368,7 +419,8 @@ class SbParamCard extends HTMLElement {
   /** Write a choice to the URL — the wire every socket on the page listens to. */
   _pick(p, value) {
     const params = new URLSearchParams(location.search);
-    value ? params.set(`seb-${p.key}`, value) : params.delete(`seb-${p.key}`);
+    const v = Array.isArray(value) ? value.join(",") : value;
+    v ? params.set(`seb-${p.key}`, v) : params.delete(`seb-${p.key}`);
     const q = params.toString();
     history.pushState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
     fire(this, "location-changed", {});
@@ -383,11 +435,11 @@ class SbParamCard extends HTMLElement {
     const text = String(this._config.text ?? "").trim();
     if (!knobs.length && !text) { this._unsubText(); this._sel?.remove(); this._sel = null; return; }
     const rows = knobs.map((p) => ({ p, items: this._items(p), value: this._valueOf(p), live: this._live(p) }));
-    const sig = rows.map((r) => choicesSignature(r.items) + "\u0001" + r.value + "\u0001" + (r.live == null)).join("\u0002") + "\u0004" + text;
+    const sig = rows.map((r) => choicesSignature(r.items) + "\u0001" + JSON.stringify(r.value) + "\u0001" + (r.live == null)).join("\u0002") + "\u0004" + text;
     if (this._sel && this._selSig === sig && !force) return;
     // Never yank a dropdown the user is in. If the list itself changed under
     // an open popup, the next render (on change/blur) catches up.
-    if (this._sel && this._sel.querySelector("select:focus")) { this._selDirty = true; return; }
+    if (this._sel && (this._sel.querySelector("select:focus") || this._sel.querySelector(".mpanel.open"))) { this._selDirty = true; return; }
     this._selDirty = false;
     this._selSig = sig;
     if (!this._sel) {
@@ -397,10 +449,23 @@ class SbParamCard extends HTMLElement {
       style ? style.after(this._sel) : this.prepend(this._sel);
     }
     this._sel.innerHTML = (text ? `<div class="sbp-text"><ha-markdown breaks></ha-markdown></div>` : "") + rows.map(({ p, items, value, live }, n) => {
+      if (p.multiple) {
+        // A dropdown of checkboxes: a button that reads like a select, and a
+        // panel of choices that stays open while the user ticks several.
+        const chosen = Array.isArray(value) ? value : [];
+        const label = chosen.length ? items.filter((i) => chosen.includes(i.value)).map((i) => i.label || i.value).join(", ") : (p.placeholder || "Select…");
+        return `<div class="krow" data-n="${n}">
+          ${p.title ? `<div class="title">${esc(p.title)}</div>` : ""}
+          <div class="msel"><button type="button" class="mbtn ${chosen.length ? "" : "empty"}"><span>${esc(label)}</span><span class="caret">▾</span></button>
+            <div class="mpanel">${items.filter((i) => i.value !== "").map((i) => `<label><input type="checkbox" value="${esc(i.value)}" ${chosen.includes(i.value) ? "checked" : ""}> ${esc(i.label || i.value)}</label>`).join("")}
+              ${items.length ? "" : `<div class="warn">No choices for $${esc(p.name)}$ yet</div>`}
+              <div class="mfoot"><span class="mclear">Clear</span><span class="mdone">Done</span></div></div></div>
+        </div>`;
+      }
       const cur = items.findIndex((i) => i.value === value);
       // Placeholder until a choice is made; a default counts as a choice only
       // when it is one of the items (then the dropdown shows it).
-      const sel = live == null && this._default(p) == null ? -1 : cur;
+      const sel = live == null && this._default(p) == null ? -1 : cur;   // single-select rows only
       return `<div class="krow" data-n="${n}">
         ${p.title ? `<div class="title">${esc(p.title)}</div>` : ""}
         ${items.length ? `<select>
@@ -411,6 +476,25 @@ class SbParamCard extends HTMLElement {
     }).join("");
     this._sel.querySelectorAll(".krow").forEach((row) => {
       const r = rows[Number(row.dataset.n)];
+      const ms = row.querySelector(".msel");
+      if (ms) {
+        const panel = ms.querySelector(".mpanel");
+        const close = () => { panel.classList.remove("open"); document.removeEventListener("click", onDoc, true); if (this._selDirty) setTimeout(() => this._renderSelector(true), 0); };
+        const onDoc = (e) => { if (!e.composedPath().includes(ms)) close(); };
+        ms.querySelector(".mbtn").addEventListener("click", () => {
+          if (panel.classList.toggle("open")) setTimeout(() => document.addEventListener("click", onDoc, true), 0); else close();
+        });
+        const current = () => [...panel.querySelectorAll("input[type=checkbox]")].filter((c) => c.checked).map((c) => c.value);
+        panel.querySelectorAll("input[type=checkbox]").forEach((c) => c.addEventListener("change", () => {
+          const picked = current();
+          ms.querySelector(".mbtn span").textContent = picked.length ? r.items.filter((i) => picked.includes(i.value)).map((i) => i.label || i.value).join(", ") : (r.p.placeholder || "Select…");
+          ms.querySelector(".mbtn").classList.toggle("empty", !picked.length);
+          this._pick(r.p, picked);                  // live: sockets follow each tick
+        }));
+        panel.querySelector(".mclear").addEventListener("click", () => { panel.querySelectorAll("input").forEach((c) => { c.checked = false; }); this._pick(r.p, []); close(); });
+        panel.querySelector(".mdone").addEventListener("click", close);
+        return;
+      }
       const sel = row.querySelector("select");
       sel?.addEventListener("change", (e) => {
         const item = r.items[Number(e.target.value)];
@@ -462,7 +546,8 @@ class SbParamCard extends HTMLElement {
       anchor ? anchor.after(this._bar) : this.prepend(this._bar);
     }
     this._bar.innerHTML = live.map(({ p, live, value }, n) => {
-      const shown = live === value ? esc(this._labelFor(p, value))
+      const ok = Array.isArray(value) ? value.length > 0 : live === value;
+      const shown = ok ? esc(this._labelFor(p, value))
         : `<span style="color:var(--warning-color, orange)">“${esc(live)}” is not a choice — showing default</span>`;
       return `<span>${esc(p.name)}: <b>${shown}</b><span class="sbp-clear" data-n="${n}" title="Clear">✕</span></span>`;
     }).join("");
@@ -528,7 +613,8 @@ class SbParamCard extends HTMLElement {
     // "Everywhere" choice means "no narrowing", not "area = nothing".
     for (const p of this._params()) {
       const a = p.apply;
-      if (a && a.field && values[p.name] !== "") cfg = applyField(cfg, a.field, values[p.name], a.mode || "set");
+      const v = values[p.name];
+      if (a && a.field && v !== "" && !(Array.isArray(v) && !v.length)) cfg = applyField(cfg, a.field, v, a.mode || "set");
     }
 
     // Same card type? Only a few cards are re-configured IN PLACE, to keep
@@ -708,7 +794,7 @@ class SbParamCardEditor extends HTMLElement {
         ? `${items.length} from <code>${esc(p.source_entity || "?")}</code> · ${esc(p.source_attribute || "?")}`
         : items.length ? `${items.length}: ${esc(items.slice(0, 4).map((i) => i.label).join(", "))}${items.length > 4 ? "…" : ""}`
         : `<span class="warn">no choices yet</span>`;
-      return [`<code>$${esc(p.name)}$</code>${p.title ? ` “${esc(p.title)}”` : ""}`, src];
+      return [`<code>$${esc(p.name)}$</code>${p.title ? ` “${esc(p.title)}”` : ""}${p.multiple ? ` <span class="chip">multi</span>` : ""}`, src];
     })];
   }
 
@@ -881,6 +967,7 @@ class SbParamCardEditor extends HTMLElement {
     const schema = [
       { name: "dropdown", selector: { boolean: {} } },
       ...(p.dropdown ? [
+        { name: "multiple", selector: { boolean: {} } },
         { name: "title", selector: { text: {} } },
         { name: "placeholder", selector: { text: {} } },
         { name: "choices_source", selector: { select: { mode: "dropdown", options: [
@@ -890,16 +977,17 @@ class SbParamCardEditor extends HTMLElement {
         { name: "all_label", selector: { text: {} } },
       ] : []),
     ];
-    this._form = this._mkForm(schema, { choices_source: "static", dropdown: false, ...p },
-      { dropdown: `Show a dropdown for $${p.name}$ (this card is its knob)`, title: "Label", placeholder: "Placeholder (before a choice)",
+    this._form = this._mkForm(schema, { choices_source: "static", dropdown: false, multiple: false, ...p },
+      { dropdown: `Show a dropdown for $${p.name}$ (this card is its knob)`, multiple: "Allow several choices (checkboxes)", title: "Label", placeholder: "Placeholder (before a choice)",
         choices_source: "Choices", source_entity: "Entity", source_attribute: "Attribute",
         source_label_field: "Label field", source_value_field: "Value field", all_label: "Extra “show all” choice" },
       { dropdown: "Off: for this parameter the card is a silent socket and takes its choices from the knob sharing the key.",
+        multiple: "The value becomes a list: comma-joined in $name$ ($name:json$ for a Jinja list), a real list when applied to a field such as areas.",
         choices_source: "Typed in, or read live from an entity attribute (a dictionary contributes its keys, a list its entries).",
         all_label: "Optional first choice that clears the value, e.g. “All lines”." },
       (v) => {
         const cur = this._params()[i];
-        const structural = v.dropdown !== !!cur.dropdown || v.choices_source !== (cur.choices_source || "static") ||
+        const structural = v.dropdown !== !!cur.dropdown || v.multiple !== !!cur.multiple || v.choices_source !== (cur.choices_source || "static") ||
           v.source_entity !== cur.source_entity || v.source_attribute !== cur.source_attribute;
         const { name, key, default: d, choices, ...rest } = v;      // the form never owns those
         this._setParam(i, rest);
