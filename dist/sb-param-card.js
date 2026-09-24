@@ -32,7 +32,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;

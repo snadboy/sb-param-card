@@ -11,7 +11,7 @@ value; each card is one or both of:
 | Switch | The card is… | What it does |
 |---|---|---|
 | **Show a dropdown** (`show_selector`) | the **knob** | carries the choices, draws the dropdown, **writes** the URL, publishes its choices for the sockets |
-| **Wrap a card** (`card`) | a **socket** | substitutes `$parameter$` into the wrapped card — an entity id, a Jinja template, a map source, an Entity Browser's `filter` |
+| **Wrap a card** (`card`) | a **socket** | substitutes `$parameter$` into the wrapped card — an entity id, a Jinja template, a map source, a word in an Entity Browser pattern (`"fp300 $q$"`) |
 
 A knob with no card is a bare dropdown; a knob with a card drives that card
 directly; a socket with no dropdown is silent and takes its choices from the
