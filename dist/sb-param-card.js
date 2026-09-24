@@ -32,7 +32,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.8.1";
+const VERSION = "0.8.2";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -297,8 +297,12 @@ class SbParamCard extends HTMLElement {
   _params() { return this._config?.parameters || []; }
   _knobs() { return this._params().filter((p) => p.dropdown); }
 
-  /** Publish every dropdown's choices for the sockets sharing its key. */
+  /** Publish every dropdown's choices for the sockets sharing its key.
+   *  Re-renders the dropdown only when a list actually changed: HA pushes
+   *  state several times a second, and rebuilding a native <select> while
+   *  its popup is open closes it (seen with area/label-sourced knobs). */
   _publishAll() {
+    let changed = false;
     for (const p of this._knobs()) {
       const items = resolveChoices(this._hass, p);
       const sig = choicesSignature(items);
@@ -308,8 +312,9 @@ class SbParamCard extends HTMLElement {
       if (prev && prev.sig === sigd && (prev.el === this || prev.el.isConnected)) continue;   // same list already published by a live knob
       KNOBS.set(key, { el: this, items, sig: sigd, default: p.default });
       announce(key);
+      changed = true;
     }
-    if (this._sel) this._renderSelector(true);
+    if (changed && this._sel) this._renderSelector(true);
   }
 
   _items(p) {
@@ -380,6 +385,10 @@ class SbParamCard extends HTMLElement {
     const rows = knobs.map((p) => ({ p, items: this._items(p), value: this._valueOf(p), live: this._live(p) }));
     const sig = rows.map((r) => choicesSignature(r.items) + "\u0001" + r.value + "\u0001" + (r.live == null)).join("\u0002") + "\u0004" + text;
     if (this._sel && this._selSig === sig && !force) return;
+    // Never yank a dropdown the user is in. If the list itself changed under
+    // an open popup, the next render (on change/blur) catches up.
+    if (this._sel && this._sel.querySelector("select:focus")) { this._selDirty = true; return; }
+    this._selDirty = false;
     this._selSig = sig;
     if (!this._sel) {
       this._sel = document.createElement("ha-card");
@@ -402,10 +411,12 @@ class SbParamCard extends HTMLElement {
     }).join("");
     this._sel.querySelectorAll(".krow").forEach((row) => {
       const r = rows[Number(row.dataset.n)];
-      row.querySelector("select")?.addEventListener("change", (e) => {
+      const sel = row.querySelector("select");
+      sel?.addEventListener("change", (e) => {
         const item = r.items[Number(e.target.value)];
         if (item) this._pick(r.p, item.value);
       });
+      sel?.addEventListener("blur", () => { if (this._selDirty) setTimeout(() => this._renderSelector(true), 0); });
     });
     if (text) this._renderText(text);
   }

@@ -262,3 +262,16 @@ flagged unused. Demo ⑤ (`add_apply_demo.py`): 22 areas + Everywhere; Kitchen
 → built `areas: ["kitchen"]`, 76 → 1 rows; bogus URL → default. Caveat
 documented in README: EB `areas` is the BASE tier — appending to a card that
 already has areas widens.
+
+## v0.8.2 — the dropdown closed by itself (2026-09-24)
+
+User: an area/label dropdown "shows all the options, then loses focus and
+disappears". Cause: for registry/entity-sourced knobs `set hass` called
+`_publishAll()`, which ended with an unconditional `_renderSelector(true)`
+— rebuilding the `<select>`'s innerHTML on EVERY hass tick (several per
+second), which closes an open native popup. Fix: `_publishAll` re-renders
+only when a list actually changed, and `_renderSelector` never rebuilds
+while a `select` inside it has focus (`_selDirty` → catch up on blur).
+Measured: 51 hass ticks with the area select focused, same element, still
+focused. General rule for any card: never rebuild a native control from a
+hass setter unless its content changed, and never while it is focused.
