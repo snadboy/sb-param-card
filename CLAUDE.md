@@ -305,3 +305,16 @@ three 0 (no such entity). Trap found: a blank word parameter substitutes an
 empty pattern, which the browser ignores → EVERY entity (~9,000 rows, the
 first screenshot came back with 0 rows still rendering). Give the word a
 `default`, or a base word in the pattern ("sensor $kind$"). README says so.
+
+## v0.10.0 — `only`: any area/label, or just these (2026-09-24)
+
+User: area/label dropdowns should offer either everything or a chosen
+subset. `only: [ids]` on a registry-sourced parameter filters
+`registryChoices`; empty = all. Editor: a real HA picker — `selector:
+{area|label|floor: {multiple: true}}` chosen by `choices_source` — labelled
+"Only these areas/labels/floors"; the picker shows names and flags an
+unknown id as "Unknown area selected" (seen with a made-up `family_room`).
+Overview reads "2 of HA's areas (only these)" vs "all 60 of HA's labels".
+A URL value outside the subset is dropped like any non-choice
+(`?seb-combo-area=kitchen,backyard` → [kitchen]). Demo ⑥'s Areas is
+restricted to three.

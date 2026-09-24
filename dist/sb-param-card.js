@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.9.0";
+const VERSION = "0.10.0";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -136,6 +136,9 @@ const resolveChoices = (hass, config) => {
   let out;
   if (REGISTRY_SOURCES.has(config.choices_source)) {
     out = registryChoices(hass, config.choices_source);
+    // `only`: restrict a registry source to a picked subset (ids); empty = any.
+    const only = (config.only || []).map(String).filter(Boolean);
+    if (only.length) out = out.filter((i) => only.includes(i.value));
   } else if (config.choices_source === "entity") {
     const st = hass?.states?.[config.source_entity];
     const raw = st?.attributes?.[config.source_attribute];
@@ -169,7 +172,7 @@ const choicesSignature = (items) => items.map((i) => i.label + "\u0000" + i.valu
 
 
 // ---- config shape -----------------------------------------------------------
-const PARAM_FIELDS = ["name", "key", "default", "dropdown", "multiple", "title", "placeholder", "choices", "apply",
+const PARAM_FIELDS = ["name", "key", "default", "dropdown", "multiple", "title", "placeholder", "choices", "only", "apply",
   "choices_source", "source_entity", "source_attribute", "source_label_field", "source_value_field",
   "source_sort", "all_label"];
 const newKey = () => "seb-" + Math.random().toString(36).slice(2, 8);
@@ -789,7 +792,7 @@ class SbParamCardEditor extends HTMLElement {
     return [textRow, ...knobs.map((p) => {
       const items = resolveChoices(this._hass, p);
       const src = REGISTRY_SOURCES.has(p.choices_source)
-        ? `${items.length} from HA's ${p.choices_source}`
+        ? ((p.only || []).length ? `${items.length} of HA's ${p.choices_source} (only these)` : `all ${items.length} of HA's ${p.choices_source}`)
         : p.choices_source === "entity"
         ? `${items.length} from <code>${esc(p.source_entity || "?")}</code> · ${esc(p.source_attribute || "?")}`
         : items.length ? `${items.length}: ${esc(items.slice(0, 4).map((i) => i.label).join(", "))}${items.length > 4 ? "…" : ""}`
@@ -974,15 +977,20 @@ class SbParamCardEditor extends HTMLElement {
             { value: "static", label: "Typed in below" }, { value: "entity", label: "From an entity attribute" },
             { value: "areas", label: "Every area (from HA)" }, { value: "labels", label: "Every label (from HA)" }, { value: "floors", label: "Every floor (from HA)" } ] } } },
         ...(p.choices_source === "entity" ? this._dynamicSchema(p) : []),
+        ...(REGISTRY_SOURCES.has(p.choices_source)
+          ? [{ name: "only", selector: { [{ areas: "area", labels: "label", floors: "floor" }[p.choices_source]]: { multiple: true } } }]
+          : []),
         { name: "all_label", selector: { text: {} } },
       ] : []),
     ];
     this._form = this._mkForm(schema, { choices_source: "static", dropdown: false, multiple: false, ...p },
       { dropdown: `Show a dropdown for $${p.name}$ (this card is its knob)`, multiple: "Allow several choices (checkboxes)", title: "Label", placeholder: "Placeholder (before a choice)",
+        only: { areas: "Only these areas", labels: "Only these labels", floors: "Only these floors" }[p.choices_source] || "Only these",
         choices_source: "Choices", source_entity: "Entity", source_attribute: "Attribute",
         source_label_field: "Label field", source_value_field: "Value field", all_label: "Extra “show all” choice" },
       { dropdown: "Off: for this parameter the card is a silent socket and takes its choices from the knob sharing the key.",
         multiple: "The value becomes a list: comma-joined in $name$ ($name:json$ for a Jinja list), a real list when applied to a field such as areas.",
+        only: "Leave empty to offer every one Home Assistant knows; pick some to offer only those.",
         choices_source: "Typed in, or read live from an entity attribute (a dictionary contributes its keys, a list its entries).",
         all_label: "Optional first choice that clears the value, e.g. “All lines”." },
       (v) => {
@@ -990,6 +998,7 @@ class SbParamCardEditor extends HTMLElement {
         const structural = v.dropdown !== !!cur.dropdown || v.multiple !== !!cur.multiple || v.choices_source !== (cur.choices_source || "static") ||
           v.source_entity !== cur.source_entity || v.source_attribute !== cur.source_attribute;
         const { name, key, default: d, choices, ...rest } = v;      // the form never owns those
+        if (Array.isArray(rest.only) && !rest.only.length) rest.only = undefined;
         this._setParam(i, rest);
         if (structural) { this._rows = null; this._renderDialogBody(); }
       },
