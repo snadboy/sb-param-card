@@ -368,3 +368,17 @@ source. Demo ⑤/⑥ knobs had their explicit applies removed (3). Verified
 live: `implicit_runtime_test.js` — no apply stored, tick a label → browser
 `labels: [id]`, 284 → 0 / 8 rows; area alone → 10; `implicit_apply_test.js`
 — editor stores `null` for labels then areas, hint says automatic.
+
+## v0.11.1 — the user's card was actually dead: stale default + scalar into a list (2026-09-24)
+
+Removing the mismatched apply was not enough; the Home-view card rendered
+"SB Param Card: (l || []).filter is not a function". Two causes, both
+mine: (1) `_choices()` counted the parameter's `default` as a valid value
+even for a registry source — the card still carried `default: one` from
+its static-list days, so "one" was applied to `labels` as if it were an
+id. Registry dropdowns now ignore a default the registry doesn't offer.
+(2) A single-select (`multiple: false`) dropdown applied a plain string;
+`areas`/`labels`/`floors` are lists on every card, so the implicit apply
+wraps one id as `[id]`. EB 0.14.2 tolerates a string anyway. Verified on
+the real card (`home_single_test.js`): value "" → empty state, Matter
+Thread Hub → 6 rows, Matter Thread Relay → 4.

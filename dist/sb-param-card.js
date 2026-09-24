@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.11.0";
+const VERSION = "0.11.1";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -364,6 +364,11 @@ class SbParamCard extends HTMLElement {
     const out = [];
     const push = (v) => { const s = String(v ?? ""); if (!out.includes(s)) out.push(s); };
     for (const i of this._items(p)) push(i.value);
+    // A default is a value in its own right for a static/entity list or a
+    // socket. A registry dropdown's default must be an id HA actually has:
+    // a leftover "one" from an earlier static list was applied to `labels`
+    // as a real id once (the browser died on it). Read from the registry.
+    if (REGISTRY_SOURCES.has(p.choices_source)) return out;
     const def = this._default(p);
     if (Array.isArray(def)) def.forEach(push); else if (def != null) push(def);
     return out;
@@ -626,7 +631,10 @@ class SbParamCard extends HTMLElement {
     for (const p of this._params()) {
       const a = effectiveApply(p);
       const v = values[p.name];
-      if (a && a.field && v !== "" && !(Array.isArray(v) && !v.length)) cfg = applyField(cfg, a.field, v, a.mode || "set");
+      if (!a || !a.field || v === "" || (Array.isArray(v) && !v.length)) continue;
+      // areas/labels/floors are lists on every card: one picked id is a one-item list.
+      const val = a.implicit && !Array.isArray(v) ? [v] : v;
+      cfg = applyField(cfg, a.field, val, a.mode || "set");
     }
 
     // Same card type? Only a few cards are re-configured IN PLACE, to keep
