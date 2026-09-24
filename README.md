@@ -66,8 +66,8 @@ Give the word a `default` — a blank pattern means *every* entity.
 ```yaml
 parameters:
   - { name: kind,  key: combo-kind,  dropdown: true, default: battery, choices: [{label: Battery, value: battery}, {label: Occupancy, value: occupancy}] }
-  - { name: area,  key: combo-area,  dropdown: true, multiple: true, choices_source: areas,  apply: { field: areas,  mode: set } }
-  - { name: label, key: combo-label, dropdown: true, multiple: true, choices_source: labels, apply: { field: labels, mode: set } }
+  - { name: area,  key: combo-area,  dropdown: true, multiple: true, choices_source: areas }   # filters `areas` by itself
+  - { name: label, key: combo-label, dropdown: true, multiple: true, choices_source: labels }  # filters `labels` by itself
 card: { type: custom:sb-entity-browser, patterns: ["$kind$"] }
 ```
 
@@ -127,7 +127,7 @@ card:
 | `title` / `placeholder` | Dropdown label and its "nothing chosen" text |
 | `choices` | Typed choices: `label` + `value` per row |
 | `choices_source` | `static` (default), `entity` — choices read live from `source_entity` / `source_attribute` (a dictionary contributes its keys, a list its entries) — or `areas` / `labels` / `floors`, straight from HA's registries (label = name, value = id) |
-| `apply` | `{field, mode}` — write the value into a field of the wrapped card at build time, **behind the scenes**: `field` is a dotted path (`areas`, `entities`, `a.b`), `mode` is `set` (replace) or `append` (add to a list). An empty value leaves the field alone. Lets a dropdown drive a card whose config never mentions the parameter — e.g. an area picked from the registry appended to an Entity Browser's `areas` |
+| `apply` | `{field, mode}` — write the value into a field of the wrapped card at build time, **behind the scenes**: `field` is a dotted path (`entities`, `a.b`), `mode` is `set` (replace) or `append` (add to a list). An empty value leaves the field alone. **A dropdown sourced from `areas`, `labels` or `floors` does this automatically into its own field — no `apply` needed.** Set one only to send a value somewhere else, e.g. a typed list into `entities` |
 | `only` | With a registry source: offer only these ids (picked with HA's area / label / floor picker in the editor). Empty = every one HA knows |
 | `all_label` | Optional first choice that clears the value, e.g. "All lines" |
 

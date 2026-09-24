@@ -348,3 +348,23 @@ both the Dropdowns dialog and the overview flag a registry source applied
 to a different registry field ("offers labels!"). EB's `entityAreaId`
 does resolve an entity's area via its device (1,935 entities have an area
 only that way; 34 directly) — areas matching itself was fine.
+
+## v0.11.0 — registry dropdowns apply themselves, implicitly (2026-09-24)
+
+User, on v0.10.2: "we have to tell it to apply areas and labels, shouldn't
+be automatic". The v0.10.1/0.10.2 auto-DEFAULT (editor writes an `apply`
+into the config when a source is chosen) was the wrong shape: a stored
+default can go stale (that is exactly how labels→areas happened) and it
+made the user own a decision the source already implies. Now
+`effectiveApply(p)`: an explicit `apply` wins; otherwise a
+`choices_source` of areas/labels/floors applies to that same field
+(`mode: set`, marked `implicit`) and NOTHING is stored. Editor writes no
+apply any more; switching between registry sources drops an explicit apply
+that merely mirrored the old source. Overview shows "$area$ → areas
+(automatic)"; Dropdowns hint "Filters the wrapped card's labels
+automatically"; Wrapped-card field box placeholder "labels (automatic)".
+The mismatch warning stays for an explicit apply that contradicts the
+source. Demo ⑤/⑥ knobs had their explicit applies removed (3). Verified
+live: `implicit_runtime_test.js` — no apply stored, tick a label → browser
+`labels: [id]`, 284 → 0 / 8 rows; area alone → 10; `implicit_apply_test.js`
+— editor stores `null` for labels then areas, hint says automatic.

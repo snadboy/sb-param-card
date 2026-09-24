@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.10.2";
+const VERSION = "0.11.0";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -124,6 +124,14 @@ const fetchLabels = (hass) => {
     .catch(() => { LABELS_PENDING = null; });
 };
 const REGISTRY_SOURCES = new Set(["areas", "labels", "floors"]);
+// A registry-sourced dropdown IS a filter on that field: it applies to
+// `areas` / `labels` / `floors` of the wrapped card implicitly. An explicit
+// `apply` overrides (rare); a $name$ in the card still substitutes as well.
+const effectiveApply = (p) => {
+  if (p.apply && p.apply.field) return p.apply;
+  if (REGISTRY_SOURCES.has(p.choices_source)) return { field: p.choices_source, mode: "set", implicit: true };
+  return null;
+};
 const registryChoices = (hass, source) => {
   let list = [];
   if (source === "areas") list = Object.values(hass?.areas || {}).map((a) => ({ label: a.name, value: a.area_id }));
@@ -616,7 +624,7 @@ class SbParamCard extends HTMLElement {
     // Behind-the-scenes fields: an empty value leaves the field alone, so an
     // "Everywhere" choice means "no narrowing", not "area = nothing".
     for (const p of this._params()) {
-      const a = p.apply;
+      const a = effectiveApply(p);
       const v = values[p.name];
       if (a && a.field && v !== "" && !(Array.isArray(v) && !v.length)) cfg = applyField(cfg, a.field, v, a.mode || "set");
     }
@@ -808,11 +816,11 @@ class SbParamCardEditor extends HTMLElement {
     const use = tokenUsage(c.card);
     const names = this._params().map((p) => p.name);
     const mine = this._params().map((p) => {
-      const n = p.name, a = p.apply;
+      const n = p.name, a = effectiveApply(p);
       const sub = use[n] ? `<code>$${esc(n)}$</code> ×${use[n]}` : "";
       const REG = { areas: "areas", labels: "labels", floors: "floors" };
-      const bad = a && a.field && REG[p.choices_source] && Object.values(REG).includes(a.field) && a.field !== REG[p.choices_source];
-      const app = a && a.field ? `<code>$${esc(n)}$</code> → <code>${esc(a.field)}</code>${a.mode === "append" ? " (append)" : ""}${bad ? ` <span class="warn">(offers ${esc(p.choices_source)}!)</span>` : ""}` : "";
+      const bad = a && REG[p.choices_source] && Object.values(REG).includes(a.field) && a.field !== REG[p.choices_source];
+      const app = a ? `<code>$${esc(n)}$</code> → <code>${esc(a.field)}</code>${a.implicit ? " (automatic)" : a.mode === "append" ? " (append)" : ""}${bad ? ` <span class="warn">(offers ${esc(p.choices_source)}!)</span>` : ""}` : "";
       return sub && app ? `${sub} · ${app}` : sub || app || `<span class="warn">$${esc(n)}$ unused</span>`;
     }).join(" · ");
     const others = Object.keys(use).filter((k) => !names.includes(k));
@@ -1002,15 +1010,11 @@ class SbParamCardEditor extends HTMLElement {
           v.source_entity !== cur.source_entity || v.source_attribute !== cur.source_attribute;
         const { name, key, default: d, choices, ...rest } = v;      // the form never owns those
         if (Array.isArray(rest.only)) { rest.only = rest.only.filter((x) => x && !String(x).startsWith("___")); if (!rest.only.length) rest.only = undefined; }
-        // An area/label/floor dropdown almost always means "filter the wrapped
-        // card by it": default the apply to that field unless the parameter is
-        // already consumed somewhere (a $token$ in the card, or an apply).
+        // Switching between registry sources: an explicit apply that merely
+        // mirrored the old source is dropped — the new source applies itself.
         const FIELD = { areas: "areas", labels: "labels", floors: "floors" };
-        if (FIELD[rest.choices_source] && rest.choices_source !== cur.choices_source) {
-          const wasDefault = cur.apply && cur.apply.field === FIELD[cur.choices_source];   // still pointing at the OLD source's field
-          if ((!cur.apply || wasDefault) && !(tokenUsage(this._config.card)[cur.name]))
-            rest.apply = { field: FIELD[rest.choices_source], mode: cur.apply?.mode || "set" };   // follow the source: labels → labels, never labels → areas
-        }
+        if (FIELD[rest.choices_source] && rest.choices_source !== cur.choices_source && cur.apply && Object.values(FIELD).includes(cur.apply.field))
+          rest.apply = undefined;
         this._setParam(i, rest);
         if (structural) { this._rows = null; this._renderDialogBody(); }
       },
@@ -1023,12 +1027,13 @@ class SbParamCardEditor extends HTMLElement {
       this._renderChoices(i);
     }
     if (p.dropdown) {
-      const used = !!tokenUsage(this._config.card)[p.name], ap = p.apply?.field;
+      const used = !!tokenUsage(this._config.card)[p.name], ea = effectiveApply(p), ap = ea?.field;
       const where = document.createElement("div"); where.className = "hint";
       const REG = { areas: "areas", labels: "labels", floors: "floors" };
       const mismatch = ap && REG[p.choices_source] && Object.values(REG).includes(ap) && ap !== REG[p.choices_source];
-      where.innerHTML = mismatch ? `<span class="warn">This dropdown offers <b>${esc(p.choices_source)}</b> but the value is applied to the <code>${esc(ap)}</code> field — that can never match. Change it under <i>Wrapped card</i> to <code>${esc(REG[p.choices_source])}</code>.</span>`
-        : ap ? `Value goes to the wrapped card's <code>${esc(ap)}</code> field (${p.apply.mode === "append" ? "append" : "replace"}) — change under <i>Wrapped card</i>.`
+      where.innerHTML = mismatch ? `<span class="warn">This dropdown offers <b>${esc(p.choices_source)}</b> but an explicit apply sends the value to the <code>${esc(ap)}</code> field — that can never match. Clear it under <i>Wrapped card</i> and the dropdown applies to <code>${esc(REG[p.choices_source])}</code> by itself.</span>`
+        : ea?.implicit ? `Filters the wrapped card's <b>${esc(ap)}</b> automatically${used ? `, and <code>$${esc(p.name)}$</code> is substituted too` : ""}.`
+        : ap ? `Value goes to the wrapped card's <code>${esc(ap)}</code> field (${ea.mode === "append" ? "append" : "replace"}) — change under <i>Wrapped card</i>.`
         : used ? `Value goes wherever <code>$${esc(p.name)}$</code> appears in the wrapped card.`
         : this._config.card ? `<span class="warn">Nothing uses <code>$${esc(p.name)}$</code> yet: write it into the wrapped card, or set <i>Apply parameters to fields</i> under <i>Wrapped card</i>.</span>` : "";
       if (where.innerHTML) body.appendChild(where);
@@ -1099,12 +1104,13 @@ class SbParamCardEditor extends HTMLElement {
       // areas / labels are never asked to hold one.
       const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = "Apply parameters to fields (behind the scenes)"; body.appendChild(sub);
       const hint = document.createElement("div"); hint.className = "hint";
-      hint.innerHTML = "Optional, per parameter: the value is written into that field when the card is built — e.g. <code>areas</code> with <i>append</i> narrows an SB Entity Browser to the chosen area without editing the browser. An empty value leaves the field alone. Dotted paths reach nested fields.";
+      hint.innerHTML = "Per parameter: the value is written into that field when the card is built. A dropdown of areas / labels / floors does this <b>automatically</b> into its own field — leave the box empty. Fill it only to send a value somewhere else (dotted paths reach nested fields), e.g. a typed list into <code>entities</code>. An empty choice leaves the field alone.";
       body.appendChild(hint);
       this._params().forEach((p, i) => {
         const row = document.createElement("div"); row.className = "prow";
         const name = document.createElement("span"); name.style.cssText = "min-width:90px; font-size:.9em;"; name.innerHTML = `<code>$${esc(p.name)}$</code>`;
-        const field = this._input(p.apply?.field || "", "field, e.g. areas", () => this._setParam(i, { apply: field.value.trim() ? { field: field.value.trim(), mode: mode.value } : undefined }));
+        const auto = REGISTRY_SOURCES.has(p.choices_source) ? `${p.choices_source} (automatic)` : "field, e.g. areas";
+        const field = this._input(p.apply?.field || "", auto, () => this._setParam(i, { apply: field.value.trim() ? { field: field.value.trim(), mode: mode.value } : undefined }));
         const mode = document.createElement("select");
         mode.style.cssText = "font:inherit; color:var(--primary-text-color); background:var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border:none; border-bottom:1px solid var(--divider-color); border-radius:4px 4px 0 0; padding:12px 8px; color-scheme: light dark;";
         mode.innerHTML = `<option value="set">replace</option><option value="append">append to list</option>`;
