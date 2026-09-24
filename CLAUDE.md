@@ -205,3 +205,17 @@ remove (never below one); the Dropdowns dialog has a tab per parameter. Peer
 count excludes HA's editor preview by walking shadow hosts — `closest()`
 does not cross them. Demo view section ④ is the two-parameter example
 (`add_multiparam_section.py`); `multiparam_test.js` drives it and the editor.
+
+## v0.6.1 — one visual card (2026-09-23)
+
+User: the demo's ④ items "bleed into one another" — the socket's value
+header was a bare div floating between cards, and a knob's dropdown sat in
+its own ha-card above the wrapped card. `_layout()` now joins whatever is
+stacked above the child into one outline: `.sbp-knob.cap` / `.sbp-bar.cap`
+take the theme's card background and border with the bottom edge open and
+radius only on the top corners; the child gets
+`--ha-card-border-radius: 0 0 var(--sbp-radius) var(--sbp-radius)` and no
+shadow (custom properties inherit INTO the wrapped card's ha-card — the one
+way to style it from outside). `--sbp-radius` is captured on the host from
+`--ha-card-border-radius` before the child overrides it. Bare knob (no card)
+and bare socket are unchanged.

@@ -25,7 +25,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -142,7 +142,16 @@ const denormalise = (config) => {
 };
 
 const STYLE = `
-  .sbp-knob { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; margin-bottom: var(--sbp-gap, 8px); }
+  /* One VISUAL card: the dropdown rows and the value header are a cap joined
+     to the wrapped card below — same background and border, radius only on
+     the outer corners — instead of three loose blocks with gaps between. */
+  sb-param-card { display: block; --sbp-radius: var(--ha-card-border-radius, 12px); }
+  .sbp-knob { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .sbp-knob.cap, .sbp-bar.cap { background: var(--ha-card-background, var(--card-background-color, #fff));
+    border: 1px solid var(--ha-card-border-color, var(--divider-color, #e0e0e0)); border-bottom: none;
+    border-radius: var(--sbp-radius) var(--sbp-radius) 0 0; margin-bottom: 0; box-shadow: none; }
+  .sbp-bar.mid { border-radius: 0; border-top: 1px solid var(--divider-color); }
+  .sbp-knob.cap + .sbp-bar.cap { border-radius: 0; border-top: 1px solid var(--divider-color); }
   .sbp-knob .krow { display: flex; align-items: center; gap: 12px; }
   .sbp-knob .title { font-weight: 500; color: var(--primary-text-color); white-space: nowrap; }
   .sbp-knob select { flex: 1; min-width: 0; font: inherit; color: var(--primary-text-color);
@@ -153,7 +162,7 @@ const STYLE = `
      dark themes get light-gray text on a white popup. */
   .sbp-knob option { background: var(--card-background-color, Canvas); color: var(--primary-text-color, CanvasText); }
   .sbp-knob .warn { color: var(--warning-color, orange); font-size: .85em; }
-  .sbp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 4px 12px 6px; font-size: .85em; color: var(--secondary-text-color); }
+  .sbp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 6px 16px; font-size: .85em; color: var(--secondary-text-color); }
   .sbp-bar b { color: var(--primary-text-color); }
   .sbp-bar .sbp-clear { cursor: pointer; color: var(--primary-color); margin-left: 4px; }
 `;
@@ -367,6 +376,23 @@ class SbParamCard extends HTMLElement {
     }));
   }
 
+  /** Join whatever is stacked above the wrapped card into one card outline. */
+  _layout() {
+    const above = !!this._child;
+    if (this._sel) this._sel.classList.toggle("cap", above || !!this._bar);
+    if (this._bar) { this._bar.classList.toggle("cap", above); this._bar.classList.toggle("mid", !!this._sel && above); }
+    if (this._child) {
+      const capped = !!(this._sel || this._bar);
+      if (capped) {
+        this._child.style.setProperty("--ha-card-border-radius", "0 0 var(--sbp-radius) var(--sbp-radius)");
+        this._child.style.setProperty("--ha-card-box-shadow", "none");
+      } else {
+        this._child.style.removeProperty("--ha-card-border-radius");
+        this._child.style.removeProperty("--ha-card-box-shadow");
+      }
+    }
+  }
+
   _error(msg) {
     this.querySelectorAll(":scope > ha-card.sbp-error").forEach((n) => n.remove());
     const el = document.createElement("ha-card");
@@ -385,6 +411,7 @@ class SbParamCard extends HTMLElement {
     this._publishAll();
     this._renderSelector();
     this._renderBar();
+    this._layout();
     if (!this._config.card) return;
 
     const values = this._values();
@@ -417,6 +444,7 @@ class SbParamCard extends HTMLElement {
       this.appendChild(el);
       this._child = el;
       this._childType = cfg.type;
+      this._layout();
     } catch (e) {
       this._error(String(e.message || e));
     }
