@@ -295,3 +295,13 @@ with a silent socket showing `$area$` and `$area:json$` in Jinja
 (`multi_test.js`: kitchen → office ticked live, builtAreas [kitchen,office],
 1 → 13 rows, panel survives 6 s of hass ticks, bogus URL entry dropped,
 Clear → 76 rows).
+
+## Demo ⑥ — word + areas + labels on one wrapper (2026-09-24)
+
+No code change: three parameters (word → pattern substitution; multi areas
+and multi labels → `apply` set) on one card over a plain browser. Measured:
+battery 284 → + Kitchen/Office 35 → + label Matter Thread Relay 1 → all
+three 0 (no such entity). Trap found: a blank word parameter substitutes an
+empty pattern, which the browser ignores → EVERY entity (~9,000 rows, the
+first screenshot came back with 0 rows still rendering). Give the word a
+`default`, or a base word in the pattern ("sensor $kind$"). README says so.

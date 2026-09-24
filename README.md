@@ -58,6 +58,19 @@ Note: for an SB Entity Browser `areas`/`labels` are the *base* tier, so
 appending to a card that already lists areas widens it (OR); on a card with
 none it narrows. Pick the field knowing that.
 
+**Any combination on one wrapper.** Parameters are independent, so one card
+can carry a word substituted into a pattern *and* multi-select areas *and*
+multi-select labels, each applied to its field; an Entity Browser ANDs them.
+Give the word a `default` — a blank pattern means *every* entity.
+
+```yaml
+parameters:
+  - { name: kind,  key: combo-kind,  dropdown: true, default: battery, choices: [{label: Battery, value: battery}, {label: Occupancy, value: occupancy}] }
+  - { name: area,  key: combo-area,  dropdown: true, multiple: true, choices_source: areas,  apply: { field: areas,  mode: set } }
+  - { name: label, key: combo-label, dropdown: true, multiple: true, choices_source: labels, apply: { field: labels, mode: set } }
+card: { type: custom:sb-entity-browser, patterns: ["$kind$"] }
+```
+
 ## Transforms
 
 | Token | "UP-W" becomes |
