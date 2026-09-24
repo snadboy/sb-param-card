@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.10.1";
+const VERSION = "0.10.2";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -810,7 +810,9 @@ class SbParamCardEditor extends HTMLElement {
     const mine = this._params().map((p) => {
       const n = p.name, a = p.apply;
       const sub = use[n] ? `<code>$${esc(n)}$</code> ×${use[n]}` : "";
-      const app = a && a.field ? `<code>$${esc(n)}$</code> → <code>${esc(a.field)}</code>${a.mode === "append" ? " (append)" : ""}` : "";
+      const REG = { areas: "areas", labels: "labels", floors: "floors" };
+      const bad = a && a.field && REG[p.choices_source] && Object.values(REG).includes(a.field) && a.field !== REG[p.choices_source];
+      const app = a && a.field ? `<code>$${esc(n)}$</code> → <code>${esc(a.field)}</code>${a.mode === "append" ? " (append)" : ""}${bad ? ` <span class="warn">(offers ${esc(p.choices_source)}!)</span>` : ""}` : "";
       return sub && app ? `${sub} · ${app}` : sub || app || `<span class="warn">$${esc(n)}$ unused</span>`;
     }).join(" · ");
     const others = Object.keys(use).filter((k) => !names.includes(k));
@@ -1004,8 +1006,11 @@ class SbParamCardEditor extends HTMLElement {
         // card by it": default the apply to that field unless the parameter is
         // already consumed somewhere (a $token$ in the card, or an apply).
         const FIELD = { areas: "areas", labels: "labels", floors: "floors" };
-        if (FIELD[rest.choices_source] && rest.choices_source !== cur.choices_source && !cur.apply && !(tokenUsage(this._config.card)[cur.name]))
-          rest.apply = { field: FIELD[rest.choices_source], mode: "set" };
+        if (FIELD[rest.choices_source] && rest.choices_source !== cur.choices_source) {
+          const wasDefault = cur.apply && cur.apply.field === FIELD[cur.choices_source];   // still pointing at the OLD source's field
+          if ((!cur.apply || wasDefault) && !(tokenUsage(this._config.card)[cur.name]))
+            rest.apply = { field: FIELD[rest.choices_source], mode: cur.apply?.mode || "set" };   // follow the source: labels → labels, never labels → areas
+        }
         this._setParam(i, rest);
         if (structural) { this._rows = null; this._renderDialogBody(); }
       },
@@ -1020,7 +1025,10 @@ class SbParamCardEditor extends HTMLElement {
     if (p.dropdown) {
       const used = !!tokenUsage(this._config.card)[p.name], ap = p.apply?.field;
       const where = document.createElement("div"); where.className = "hint";
-      where.innerHTML = ap ? `Value goes to the wrapped card's <code>${esc(ap)}</code> field (${p.apply.mode === "append" ? "append" : "replace"}) — change under <i>Wrapped card</i>.`
+      const REG = { areas: "areas", labels: "labels", floors: "floors" };
+      const mismatch = ap && REG[p.choices_source] && Object.values(REG).includes(ap) && ap !== REG[p.choices_source];
+      where.innerHTML = mismatch ? `<span class="warn">This dropdown offers <b>${esc(p.choices_source)}</b> but the value is applied to the <code>${esc(ap)}</code> field — that can never match. Change it under <i>Wrapped card</i> to <code>${esc(REG[p.choices_source])}</code>.</span>`
+        : ap ? `Value goes to the wrapped card's <code>${esc(ap)}</code> field (${p.apply.mode === "append" ? "append" : "replace"}) — change under <i>Wrapped card</i>.`
         : used ? `Value goes wherever <code>$${esc(p.name)}$</code> appears in the wrapped card.`
         : this._config.card ? `<span class="warn">Nothing uses <code>$${esc(p.name)}$</code> yet: write it into the wrapped card, or set <i>Apply parameters to fields</i> under <i>Wrapped card</i>.</span>` : "";
       if (where.innerHTML) body.appendChild(where);

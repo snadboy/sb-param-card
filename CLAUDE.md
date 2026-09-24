@@ -335,3 +335,16 @@ choosing an areas/labels/floors source in the editor now DEFAULTS
 Dropdowns dialog says where the value goes ("Value goes to the wrapped
 card's `labels` field") or warns that nothing uses it. Verified in the real
 editor (`autoapply_test.js`). The `hub` pattern is the user's to remove.
+
+## v0.10.2 — "areas still don't filter" (2026-09-24)
+
+The user's card: `choices_source: labels` (only matter_hub/matter_relay)
+but `apply: {field: areas}` — a LABEL id written into the AREAS field can
+never match. Cause: v0.10.1's auto-default set `apply` once (areas) and
+did not follow when the source was switched to labels, because "apply
+already exists" suppressed it. Now a source change moves a still-default
+apply to the new source's field (labels → labels), keeping the mode; and
+both the Dropdowns dialog and the overview flag a registry source applied
+to a different registry field ("offers labels!"). EB's `entityAreaId`
+does resolve an entity's area via its device (1,935 entities have an area
+only that way; 34 directly) — areas matching itself was fine.
