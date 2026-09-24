@@ -21,12 +21,18 @@
  *                  choices | choices_source/source_entity/source_attribute, all_label }]
  *   text — markdown / Jinja shown above the dropdowns (and with none), $name$ substituted first
  *   card, show_value
+ * Besides $name$ substitution, a parameter can be APPLIED TO A FIELD of the
+ * wrapped card behind the scenes — `apply: {field: "areas", mode: "append"}`
+ * writes the value into that field at build time, so an existing card is
+ * driven by a dropdown without editing its config (no token to type into
+ * an area/label picker). Choices can come straight from HA's area / label /
+ * floor registries (`choices_source: areas|labels|floors`).
  * The 0.5.x single-parameter shape (parameter, storage_id, show_selector, …)
  * is still read and folded into one entry.
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -59,6 +65,27 @@ const transform = (value, how) => {
   if (how === "title") return s.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
   return s;
 };
+// Write a value into a dotted path of a card config: "areas" or "a.b.c".
+// mode "append" adds to a list (creating it), "set" replaces. Returns a copy.
+const applyField = (card, path, value, mode) => {
+  const keys = String(path || "").split(".").map((k) => k.trim()).filter(Boolean);
+  if (!keys.length) return card;
+  const out = Array.isArray(card) ? [...card] : { ...card };
+  let node = out;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i];
+    const next = node[k];
+    node[k] = Array.isArray(next) ? [...next] : next && typeof next === "object" ? { ...next } : {};
+    node = node[k];
+  }
+  const last = keys[keys.length - 1];
+  if (mode === "append") {
+    const cur = node[last];
+    node[last] = Array.isArray(cur) ? [...cur, value] : cur == null || cur === "" ? [value] : [cur, value];
+  } else node[last] = value;
+  return out;
+};
+
 // Deep-substitute through every string in a card config without touching
 // its structure.
 const substitute = (node, name, value) => {
@@ -77,9 +104,29 @@ const substitute = (node, name, value) => {
 // Typed in (label + value), or live from an entity attribute: a dict yields
 // its keys, a list its entries, a list of objects its label/value fields.
 // Resolved synchronously from hass so the list is never momentarily empty.
+// The label registry is not on the hass object (areas and floors are); fetch
+// it once over the WebSocket and re-announce when it arrives.
+let LABELS_CACHE = null, LABELS_PENDING = null;
+const fetchLabels = (hass) => {
+  if (LABELS_CACHE || LABELS_PENDING || !hass?.connection) return;
+  LABELS_PENDING = hass.connection.sendMessagePromise({ type: "config/label_registry/list" })
+    .then((list) => { LABELS_CACHE = list || []; window.dispatchEvent(new CustomEvent("sb-registry-ready")); })
+    .catch(() => { LABELS_PENDING = null; });
+};
+const REGISTRY_SOURCES = new Set(["areas", "labels", "floors"]);
+const registryChoices = (hass, source) => {
+  let list = [];
+  if (source === "areas") list = Object.values(hass?.areas || {}).map((a) => ({ label: a.name, value: a.area_id }));
+  else if (source === "floors") list = Object.values(hass?.floors || {}).map((f) => ({ label: f.name, value: f.floor_id }));
+  else if (source === "labels") { fetchLabels(hass); list = (LABELS_CACHE || []).map((l) => ({ label: l.name, value: l.label_id })); }
+  return list.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+};
+
 const resolveChoices = (hass, config) => {
   let out;
-  if (config.choices_source === "entity") {
+  if (REGISTRY_SOURCES.has(config.choices_source)) {
+    out = registryChoices(hass, config.choices_source);
+  } else if (config.choices_source === "entity") {
     const st = hass?.states?.[config.source_entity];
     const raw = st?.attributes?.[config.source_attribute];
     out = [];
@@ -112,7 +159,7 @@ const choicesSignature = (items) => items.map((i) => i.label + "\u0000" + i.valu
 
 
 // ---- config shape -----------------------------------------------------------
-const PARAM_FIELDS = ["name", "key", "default", "dropdown", "title", "placeholder", "choices",
+const PARAM_FIELDS = ["name", "key", "default", "dropdown", "title", "placeholder", "choices", "apply",
   "choices_source", "source_entity", "source_attribute", "source_label_field", "source_value_field",
   "source_sort", "all_label"];
 const newKey = () => "seb-" + Math.random().toString(36).slice(2, 8);
@@ -206,7 +253,7 @@ class SbParamCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this._knobs().some((p) => p.choices_source === "entity")) this._publishAll();
+    if (this._knobs().some((p) => p.choices_source === "entity" || REGISTRY_SOURCES.has(p.choices_source))) this._publishAll();
     if (this._child) this._child.hass = hass;
     else this._update();
   }
@@ -229,6 +276,8 @@ class SbParamCard extends HTMLElement {
     window.addEventListener("location-changed", this._onNav);
     window.addEventListener("popstate", this._onNav);
     window.addEventListener("sb-knob-changed", this._onKnob);
+    this._onRegistry = () => { this._publishAll(); this._update(); };
+    window.addEventListener("sb-registry-ready", this._onRegistry);
     if (this._config && this._hass) this._publishAll();     // HA re-attaches cards during layout
     this._update();
   }
@@ -237,6 +286,7 @@ class SbParamCard extends HTMLElement {
     window.removeEventListener("location-changed", this._onNav);
     window.removeEventListener("popstate", this._onNav);
     window.removeEventListener("sb-knob-changed", this._onKnob);
+    window.removeEventListener("sb-registry-ready", this._onRegistry);
     for (const p of this._knobs()) {
       const key = `seb-${p.key}`;
       if (KNOBS.get(key)?.el === this) { KNOBS.delete(key); announce(key); }
@@ -463,6 +513,12 @@ class SbParamCard extends HTMLElement {
     this._lastSig = sig;
     let cfg = this._config.card;
     for (const [name, value] of Object.entries(values)) cfg = substitute(cfg, name, value);
+    // Behind-the-scenes fields: an empty value leaves the field alone, so an
+    // "Everywhere" choice means "no narrowing", not "area = nothing".
+    for (const p of this._params()) {
+      const a = p.apply;
+      if (a && a.field && values[p.name] !== "") cfg = applyField(cfg, a.field, values[p.name], a.mode || "set");
+    }
 
     // Same card type? Only a few cards are re-configured IN PLACE, to keep
     // their view state (a map's zoom). Everything else is rebuilt.
@@ -635,7 +691,9 @@ class SbParamCardEditor extends HTMLElement {
     if (!knobs.length) return [textRow, ["Dropdowns", `<span class="off">none — choices come from the knobs sharing the keys</span>`]];
     return [textRow, ...knobs.map((p) => {
       const items = resolveChoices(this._hass, p);
-      const src = p.choices_source === "entity"
+      const src = REGISTRY_SOURCES.has(p.choices_source)
+        ? `${items.length} from HA's ${p.choices_source}`
+        : p.choices_source === "entity"
         ? `${items.length} from <code>${esc(p.source_entity || "?")}</code> · ${esc(p.source_attribute || "?")}`
         : items.length ? `${items.length}: ${esc(items.slice(0, 4).map((i) => i.label).join(", "))}${items.length > 4 ? "…" : ""}`
         : `<span class="warn">no choices yet</span>`;
@@ -648,7 +706,12 @@ class SbParamCardEditor extends HTMLElement {
     if (!c.card) return [["Card", this._params().some((p) => p.dropdown) ? `<span class="off">none — dropdown only</span>` : `<span class="warn">none</span>`]];
     const use = tokenUsage(c.card);
     const names = this._params().map((p) => p.name);
-    const mine = names.map((n) => (use[n] ? `<code>$${esc(n)}$</code> ×${use[n]}` : `<span class="warn">$${esc(n)}$ unused</span>`)).join(" ");
+    const mine = this._params().map((p) => {
+      const n = p.name, a = p.apply;
+      const sub = use[n] ? `<code>$${esc(n)}$</code> ×${use[n]}` : "";
+      const app = a && a.field ? `<code>$${esc(n)}$</code> → <code>${esc(a.field)}</code>${a.mode === "append" ? " (append)" : ""}` : "";
+      return sub && app ? `${sub} · ${app}` : sub || app || `<span class="warn">$${esc(n)}$ unused</span>`;
+    }).join(" · ");
     const others = Object.keys(use).filter((k) => !names.includes(k));
     return [
       ["Type", esc(cardTypeName(c.card.type))],
@@ -810,7 +873,8 @@ class SbParamCardEditor extends HTMLElement {
         { name: "title", selector: { text: {} } },
         { name: "placeholder", selector: { text: {} } },
         { name: "choices_source", selector: { select: { mode: "dropdown", options: [
-            { value: "static", label: "Typed in below" }, { value: "entity", label: "From an entity attribute" } ] } } },
+            { value: "static", label: "Typed in below" }, { value: "entity", label: "From an entity attribute" },
+            { value: "areas", label: "Every area (from HA)" }, { value: "labels", label: "Every label (from HA)" }, { value: "floors", label: "Every floor (from HA)" } ] } } },
         ...(p.choices_source === "entity" ? this._dynamicSchema(p) : []),
         { name: "all_label", selector: { text: {} } },
       ] : []),
@@ -838,6 +902,7 @@ class SbParamCardEditor extends HTMLElement {
       this._rows = null;
       this._renderChoices(i);
     } else if (p.dropdown) {
+      if (REGISTRY_SOURCES.has(p.choices_source)) fetchLabels(this._hass);
       const items = resolveChoices(this._hass, p);
       const h = document.createElement("div"); h.className = "hint";
       h.textContent = items.length ? `${items.length} choice${items.length === 1 ? "" : "s"} now: ${items.slice(0, 12).map((x) => x.label).join(", ")}${items.length > 12 ? "…" : ""}`
@@ -895,6 +960,27 @@ class SbParamCardEditor extends HTMLElement {
         { show_value: "A small header above the wrapped card. Leave off when several sockets share one knob." },
         (v) => this._set({ show_value: !!v.show_value }));
       body.appendChild(this._form);
+    }
+    if (c.card) {
+      // Behind the scenes: write a parameter into a field of the wrapped card
+      // at build time — no token in the card's own config, so pickers such as
+      // areas / labels are never asked to hold one.
+      const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = "Apply parameters to fields (behind the scenes)"; body.appendChild(sub);
+      const hint = document.createElement("div"); hint.className = "hint";
+      hint.innerHTML = "Optional, per parameter: the value is written into that field when the card is built — e.g. <code>areas</code> with <i>append</i> narrows an SB Entity Browser to the chosen area without editing the browser. An empty value leaves the field alone. Dotted paths reach nested fields.";
+      body.appendChild(hint);
+      this._params().forEach((p, i) => {
+        const row = document.createElement("div"); row.className = "prow";
+        const name = document.createElement("span"); name.style.cssText = "min-width:90px; font-size:.9em;"; name.innerHTML = `<code>$${esc(p.name)}$</code>`;
+        const field = this._input(p.apply?.field || "", "field, e.g. areas", () => this._setParam(i, { apply: field.value.trim() ? { field: field.value.trim(), mode: mode.value } : undefined }));
+        const mode = document.createElement("select");
+        mode.style.cssText = "font:inherit; color:var(--primary-text-color); background:var(--mdc-text-field-fill-color, rgba(127,127,127,.12)); border:none; border-bottom:1px solid var(--divider-color); border-radius:4px 4px 0 0; padding:12px 8px; color-scheme: light dark;";
+        mode.innerHTML = `<option value="set">replace</option><option value="append">append to list</option>`;
+        mode.value = p.apply?.mode || "set";
+        mode.addEventListener("change", () => { if (field.value.trim()) this._setParam(i, { apply: { field: field.value.trim(), mode: mode.value } }); });
+        row.append(name, field, mode);
+        body.appendChild(row);
+      });
     }
     this._cardBox = document.createElement("div");
     body.appendChild(this._cardBox);

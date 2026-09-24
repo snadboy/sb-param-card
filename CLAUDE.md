@@ -235,3 +235,30 @@ text when the values signature changes even if the child is kept. Editor:
 the field sits at the top of the Dropdowns dialog; the overview's Dropdowns
 group shows "Text above" (with a Jinja chip). A card with only `text` is
 allowed (a caption card).
+
+## v0.8.0 — apply to a field, registry choices (2026-09-24)
+
+User's motivating case: drive an Entity Browser by AREA from a dropdown. The
+browser's `areas`/`labels` are HA pickers in its editor — a `$token$` has
+nowhere to live — and `filter` only knows ids/names/states. The user's
+better idea, instead of new browser fields: let the wrapper WRITE the field
+behind the scenes. Per parameter, `apply: {field, mode}` — `applyField()`
+writes the value into a dotted path of the built config (`set` replaces,
+`append` adds to a list, creating it); an EMPTY value leaves the field
+alone, so "Everywhere" means no narrowing. Runs after `$name$` substitution
+in `_update`. The stored card config never changes (`tokenInStored: false`
+in `apply_test.js`).
+
+`choices_source: areas | labels | floors` fills the knob from HA's
+registries (label = name, value = id). Areas and floors are on the `hass`
+object; the LABEL registry is not — fetched once over WS
+(`config/label_registry/list`), cached module-wide, and announced with a
+`sb-registry-ready` window event so cards re-publish/re-render when it lands.
+
+Editor: Wrapped-card dialog gains an "Apply parameters to fields" table
+(field text + replace/append select per parameter); the overview's Uses
+row reads `$area$ → areas (append)`, and a parameter with an `apply` is not
+flagged unused. Demo ⑤ (`add_apply_demo.py`): 22 areas + Everywhere; Kitchen
+→ built `areas: ["kitchen"]`, 76 → 1 rows; bogus URL → default. Caveat
+documented in README: EB `areas` is the BASE tier — appending to a card that
+already has areas widens.

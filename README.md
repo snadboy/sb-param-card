@@ -30,6 +30,34 @@ card:
 geo_location_sources: [metra_$line:slug$]
 ```
 
+## Two ways a parameter reaches the wrapped card
+
+1. **Substitution** — write `$name$` anywhere in the card's config (templates,
+   entity ids, titles). Explicit, and visible in the card's own editor.
+2. **Apply to a field** — `apply: {field: areas, mode: append}` writes the
+   value into that field when the card is built, without the card's config
+   mentioning it. This is for fields that are *pickers* in the card's editor
+   (areas, labels, entities) where a `$token$` has nowhere to live; choose
+   `choices_source: areas` and the dropdown fills itself from HA.
+
+```yaml
+parameters:
+  - name: area
+    key: lights-area
+    dropdown: true
+    title: Area
+    choices_source: areas
+    all_label: Everywhere          # empty value → the field is left alone
+    apply: { field: areas, mode: append }
+card:
+  type: custom:sb-entity-browser   # its config never mentions $area$
+  patterns: ["light.*"]
+```
+
+Note: for an SB Entity Browser `areas`/`labels` are the *base* tier, so
+appending to a card that already lists areas widens it (OR); on a card with
+none it narrows. Pick the field knowing that.
+
 ## Transforms
 
 | Token | "UP-W" becomes |
@@ -83,7 +111,8 @@ card:
 | `dropdown` | This card draws the dropdown for this parameter — it is the knob |
 | `title` / `placeholder` | Dropdown label and its "nothing chosen" text |
 | `choices` | Typed choices: `label` + `value` per row |
-| `choices_source` | `static` (default) or `entity` — choices read live from `source_entity` / `source_attribute` (a dictionary contributes its keys, a list its entries) |
+| `choices_source` | `static` (default), `entity` — choices read live from `source_entity` / `source_attribute` (a dictionary contributes its keys, a list its entries) — or `areas` / `labels` / `floors`, straight from HA's registries (label = name, value = id) |
+| `apply` | `{field, mode}` — write the value into a field of the wrapped card at build time, **behind the scenes**: `field` is a dotted path (`areas`, `entities`, `a.b`), `mode` is `set` (replace) or `append` (add to a list). An empty value leaves the field alone. Lets a dropdown drive a card whose config never mentions the parameter — e.g. an area picked from the registry appended to an Entity Browser's `areas` |
 | `all_label` | Optional first choice that clears the value, e.g. "All lines" |
 
 | Card | Meaning |
