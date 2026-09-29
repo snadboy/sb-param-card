@@ -382,3 +382,11 @@ id. Registry dropdowns now ignore a default the registry doesn't offer.
 wraps one id as `[id]`. EB 0.14.2 tolerates a string anyway. Verified on
 the real card (`home_single_test.js`): value "" → empty state, Matter
 Thread Hub → 6 rows, Matter Thread Relay → 4.
+
+## v0.12.0 — fixed Layout rows reach the wrapped card (2026-09-29)
+
+`static getGridOptions()` (columns 12, min 4, rows auto, min_rows 2).
+`_fillCell` = `grid_options.rows` numeric → host becomes `display:flex;
+flex-direction:column; height:100%`, the child gets `flex:1 1 auto;
+min-height:0`, and `child._forceFill = true` (set before the first
+render) so an SB Entity Browser fills its list inside the cell.

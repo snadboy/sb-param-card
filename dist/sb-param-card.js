@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.11.1";
+const VERSION = "0.12.0";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -294,6 +294,13 @@ class SbParamCard extends HTMLElement {
     if (this._child) this._child.hass = hass;
     else this._update();
   }
+
+  // Sections layout: fixed rows in the Layout tab reach the WRAPPED card —
+  // this host becomes a flex column filling the cell, the child flexes, and a
+  // child that knows how (SB Entity Browser's _forceFill) fills its own list.
+  static getGridOptions() { return { columns: 12, min_columns: 4, rows: "auto", min_rows: 2 }; }
+  getGridOptions() { return SbParamCard.getGridOptions(); }
+  get _fillCell() { const r = this._config?.grid_options?.rows; return typeof r === "number" && r > 0; }
 
   getCardSize() {
     return ((this._knobs().length || this._config?.text) ? 1 : 0) + (this._child?.getCardSize?.() ?? (this._config?.card ? 3 : 0));
@@ -580,6 +587,15 @@ class SbParamCard extends HTMLElement {
 
   /** Join whatever is stacked above the wrapped card into one card outline. */
   _layout() {
+    const fill = this._fillCell;
+    this.style.display = fill ? "flex" : "";
+    this.style.flexDirection = fill ? "column" : "";
+    this.style.height = fill ? "100%" : "";
+    if (this._child) {
+      this._child.style.flex = fill ? "1 1 auto" : "";
+      this._child.style.minHeight = fill ? "0" : "";
+      if (fill && !this._child._forceFill) { this._child._forceFill = true; this._child._sig = ""; this._child._render?.(); }
+    }
     const above = !!this._child;
     if (this._sel) this._sel.classList.toggle("cap", above || !!this._bar);
     if (this._bar) { this._bar.classList.toggle("cap", above); this._bar.classList.toggle("mid", !!this._sel && above); }
@@ -651,6 +667,7 @@ class SbParamCard extends HTMLElement {
     try {
       const helpers = await window.loadCardHelpers();
       const el = helpers.createCardElement(cfg);
+      if (this._fillCell) el._forceFill = true;          // before the first render
       el.hass = this._hass;
       this._child?.remove();
       this.querySelectorAll(":scope > ha-card.sbp-error").forEach((n) => n.remove());
