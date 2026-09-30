@@ -413,3 +413,25 @@ transform but :json) becomes one element per chosen value; nothing chosen
 drops the element; strings elsewhere (a title) still join. Verified:
 multi → [calendar.holiday, calendar.workday, calendar.anderson]; single →
 one; none → fixed entity only; object elements fan out too.
+
+## v0.12.3 — the wrapped card's grid rows, and HA's `layout` reach it (2026-09-30)
+
+User: wrapped calendar clipped at the bottom "with Layout auto". HA's
+calendar card sizes itself two ways: `layout === "grid"` (set by hui-card in
+a sections view) → `--calendar-height: calc(100% - …)` of the cell; anything
+else → a fixed 400 px calendar inside `ha-card{overflow:hidden}`. This
+wrapper reported `rows: "auto"` for itself and never forwarded `layout`, so
+the calendar behaved as if in masonry and clipped.
+Now: `getGridOptions()` = the wrapped card's grid options (child instance,
+else its class — static or a throwaway instance) + 1 row per thing stacked
+above (knob, text bar); `_fillCell` is also true when `layout === "grid"`
+and those default rows are numeric; `set layout` stores and forwards to the
+child (and on creation). GOTCHA that cost the afternoon: HA loads card
+modules lazily, so `createCardElement` can return a NOT-YET-UPGRADED
+element (no `getGridOptions`) — every layout pass saw "no child options"
+and left fill off; a hooked test run passed only because a registry event
+happened to re-run `_update` later. Fix: `customElements.whenDefined(
+el.localName).then(settled)` re-runs `_layout()` + fires `card-updated`.
+Verified twice unhooked: cell span 7 (440 px), wrapper flex 440, child
+372, calendar 316, full month visible. Native calendar cards report the
+same ha-card scrollHeight > clientHeight (~40–50 px) — HA's own, not a clip.

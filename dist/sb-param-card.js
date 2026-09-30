@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.12.2";
+const VERSION = "0.12.3";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -316,8 +316,53 @@ class SbParamCard extends HTMLElement {
   // this host becomes a flex column filling the cell, the child flexes, and a
   // child that knows how (SB Entity Browser's _forceFill) fills its own list.
   static getGridOptions() { return { columns: 12, min_columns: 4, rows: "auto", min_rows: 2 }; }
-  getGridOptions() { return SbParamCard.getGridOptions(); }
-  get _fillCell() { const r = this._config?.grid_options?.rows; return typeof r === "number" && r > 0; }
+  // The WRAPPED card's grid options, plus a row for whatever the wrapper
+  // stacks above it (the knob, the text bar). HA's calendar card asks for 6
+  // rows and, in a sections view, sizes its calendar to the cell — with
+  // "auto" rows from this wrapper it fell back to a fixed 400 px calendar
+  // and clipped (0.12.0–0.12.2). Read from the child when it exists, else
+  // from its class (a throwaway instance where getGridOptions is an
+  // instance method, as on HA's own cards); a class not loaded yet means
+  // "auto" until the child is built, when card-updated makes HA re-ask.
+  _childGridOptions() {
+    const type = this._config?.card?.type;
+    if (!type) return null;
+    try {
+      if (this._child?.getGridOptions) return this._child.getGridOptions() || null;
+      const C = customElements.get(type.startsWith("custom:") ? type.slice(7) : `hui-${type}-card`);
+      if (!C) return null;
+      if (typeof C.getGridOptions === "function") return C.getGridOptions() || null;
+      if (typeof C.prototype?.getGridOptions === "function") return new C().getGridOptions() || null;
+    } catch (e) { /* the card did not like being asked before it had a config */ }
+    return null;
+  }
+  getGridOptions() {
+    const base = SbParamCard.getGridOptions();
+    const child = this._childGridOptions();
+    if (!child) return base;
+    const out = { ...base, ...child };
+    const above = (this._config && this._knobs().length ? 1 : 0) + (String(this._config?.text ?? "").trim() ? 1 : 0);
+    if (typeof out.rows === "number") out.rows += above;
+    if (typeof out.min_rows === "number") out.min_rows += above;
+    return out;
+  }
+  // Fill the cell when the Layout tab fixed the rows, or when this is a
+  // sections view and the default rows (the wrapped card's) are fixed.
+  get _fillCell() {
+    const r = this._config?.grid_options?.rows;
+    if (typeof r === "number") return r > 0;
+    if (r === "auto") return false;
+    return this._layoutMode === "grid" && typeof this.getGridOptions().rows === "number";
+  }
+  // HA's hui-card sets `layout` ("grid" in a sections view, "panel"…) on the
+  // card it builds — us. The wrapped card needs it too: that is how HA's
+  // calendar knows to size itself to the cell.
+  set layout(v) {
+    this._layoutMode = v;
+    if (this._child) { this._child.layout = v; this._child.isPanel = v === "panel"; }
+    if (this._config) this._layout();
+  }
+  get layout() { return this._layoutMode; }
 
   getCardSize() {
     return ((this._knobs().length || this._config?.text) ? 1 : 0) + (this._child?.getCardSize?.() ?? (this._config?.card ? 3 : 0));
@@ -684,6 +729,7 @@ class SbParamCard extends HTMLElement {
     try {
       const helpers = await window.loadCardHelpers();
       const el = helpers.createCardElement(cfg);
+      if (this._layoutMode !== undefined) { el.layout = this._layoutMode; el.isPanel = this._layoutMode === "panel"; }
       if (this._fillCell) el._forceFill = true;          // before the first render
       el.hass = this._hass;
       this._child?.remove();
@@ -691,7 +737,18 @@ class SbParamCard extends HTMLElement {
       this.appendChild(el);
       this._child = el;
       this._childType = cfg.type;
-      this._layout();
+      const settled = () => {
+        if (this._child !== el) return;
+        this._layout();
+        // the section read our grid options at build time; the child's may differ
+        this.dispatchEvent(new CustomEvent("card-updated", { bubbles: true, composed: true }));
+      };
+      settled();
+      // HA loads its card modules lazily: createCardElement can hand back an
+      // element that is not upgraded yet (no getGridOptions until the module
+      // lands). Re-run the layout pass once it is — that is when a calendar
+      // card's "6 rows" becomes knowable and the cell must fill.
+      if (!customElements.get(el.localName)) customElements.whenDefined(el.localName).then(settled).catch(() => {});
     } catch (e) {
       this._error(String(e.message || e));
     }
