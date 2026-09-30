@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.12.0";
+const VERSION = "0.12.1";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -1081,12 +1081,18 @@ class SbParamCardEditor extends HTMLElement {
     this._wrap.innerHTML = "";
     this._rows = [];
     const setChoices = (choices) => this._setParam(i, { choices });
+    // Every keystroke commits ALL rows from their inputs. (0.12.0 rebuilt the
+    // row from the `items` snapshot taken when the rows were drawn, so typing
+    // the label and then the value wrote the value onto a row whose label was
+    // still "" — the input showed the text, the config had lost it.)
+    const commit = () => setChoices(this._rows.map((r) => { const [l, v] = r.querySelectorAll("input"); return { label: l.value, value: v.value }; }));
+    const current = () => this._params()[i].choices || [];
     items.forEach((item, k) => {
       const row = document.createElement("div"); row.className = "prow";
-      const label = this._input(item.label, "Display text", () => setChoices(items.map((c, n) => (n === k ? { ...c, label: label.value } : c))));
-      const val = this._input(item.value, `Value ($${p.name}$)`, () => setChoices(items.map((c, n) => (n === k ? { ...c, value: val.value } : c))));
+      const label = this._input(item.label, "Display text", commit);
+      const val = this._input(item.value, `Value ($${p.name}$)`, commit);
       const del = document.createElement("ha-icon"); del.icon = "mdi:delete-outline"; del.className = "del"; del.title = "Remove";
-      del.addEventListener("click", () => { setChoices(items.filter((_, n) => n !== k)); this._rows = null; this._renderChoices(i); });
+      del.addEventListener("click", () => { setChoices(current().filter((_, n) => n !== k)); this._rows = null; this._renderChoices(i); });
       row.append(label, val, del);
       this._wrap.appendChild(row);
       this._rows.push(row);
@@ -1095,7 +1101,7 @@ class SbParamCardEditor extends HTMLElement {
     add.style.cssText = "display:inline-flex; align-items:center; gap:4px; padding:2px 4px 10px;";
     add.innerHTML = `<ha-icon icon="mdi:plus"></ha-icon>Add choice`;
     add.addEventListener("click", () => {
-      setChoices([...items, { label: "", value: "" }]);
+      setChoices([...current(), { label: "", value: "" }]);
       this._rows = null; this._renderChoices(i);
       this._wrap.querySelector("div:nth-last-child(2) input")?.focus();
     });

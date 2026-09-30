@@ -390,3 +390,15 @@ Thread Hub → 6 rows, Matter Thread Relay → 4.
 flex-direction:column; height:100%`, the child gets `flex:1 1 auto;
 min-height:0`, and `child._forceFill = true` (set before the first
 render) so an SB Entity Browser fills its list inside the cell.
+
+## v0.12.1 — typed choices were lost (2026-09-30)
+
+User: "the Calendar card wrapped by an SB Param Card will not remember the
+entries entered for the dropdown". Not calendar-specific: `_renderChoices`
+captured `items` (the choices at draw time) and each input handler rebuilt
+its row from that snapshot, so typing the label and THEN the value wrote
+`{label: "", value}` — the input still showed the label, the config had
+lost it (and reopening the dialog showed a blank row). Now every keystroke
+commits all rows from their live inputs; add/delete read the current
+choices. Headless: both typing orders persist, reopen shows both, wrapped
+calendar kept, with HA's setConfig round-trip simulated.
