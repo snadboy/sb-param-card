@@ -402,3 +402,14 @@ lost it (and reopening the dialog showed a blank row). Now every keystroke
 commits all rows from their live inputs; add/delete read the current
 choices. Headless: both typing orders persist, reopen shows both, wrapped
 calendar kept, with HA's setConfig round-trip simulated.
+
+## v0.12.2 — a list value fans out inside a list (2026-09-30)
+
+User: with "several choices" on and Holiday + Workday picked, "is there any
+way a second entity could have been added?" — `entities: [calendar.$dt:slug$]`
+substituted ONCE with the joined value → one bogus entity. `substitute` now
+fans out: inside an array, an element that mentions `$name$` (any
+transform but :json) becomes one element per chosen value; nothing chosen
+drops the element; strings elsewhere (a title) still join. Verified:
+multi → [calendar.holiday, calendar.workday, calendar.anderson]; single →
+one; none → fixed entity only; object elements fan out too.

@@ -37,7 +37,7 @@
  */
 
 const CARD = "sb-param-card";
-const VERSION = "0.12.1";
+const VERSION = "0.12.2";
 // A card is a parameter BLOCK, not a form: past a handful the overview stops
 // being readable and the URL stops being shareable by eye.
 const MAX_PARAMS = 8;
@@ -98,10 +98,27 @@ const applyField = (card, path, value, mode) => {
 
 // Deep-substitute through every string in a card config without touching
 // its structure.
+// Does this node (string, or anything containing strings) use $name$ in a
+// per-value way — i.e. any transform but :json, which wants the whole list?
+const mentions = (node, name) => {
+  if (typeof node === "string") { let hit = false; node.replace(TOKEN, (m, n, how) => { if (n === name && how !== "json") hit = true; return m; }); return hit; }
+  if (Array.isArray(node)) return node.some((x) => mentions(x, name));
+  if (node && typeof node === "object") return Object.values(node).some((x) => mentions(x, name));
+  return false;
+};
 const substitute = (node, name, value) => {
   if (typeof node === "string")
     return node.replace(TOKEN, (m, n, how) => (n === name ? transform(value, how) : m));
-  if (Array.isArray(node)) return node.map((n) => substitute(n, name, value));
+  if (Array.isArray(node)) {
+    // A list value (multiple: true) FANS OUT inside a list: an element that
+    // mentions $name$ becomes one element per chosen value, so
+    //   entities: ["calendar.$dt:slug$"]  with  Holiday + Workday
+    // gives ["calendar.holiday", "calendar.workday"]. Nothing chosen → the
+    // element is dropped. Elsewhere (a title) the list still joins.
+    if (Array.isArray(value))
+      return node.flatMap((n) => (mentions(n, name) ? value.map((v) => substitute(n, name, v)) : [substitute(n, name, value)]));
+    return node.map((n) => substitute(n, name, value));
+  }
   if (node && typeof node === "object") {
     const out = {};
     for (const k of Object.keys(node)) out[k] = substitute(node[k], name, value);
@@ -1025,7 +1042,7 @@ class SbParamCardEditor extends HTMLElement {
         choices_source: "Choices", source_entity: "Entity", source_attribute: "Attribute",
         source_label_field: "Label field", source_value_field: "Value field", all_label: "Extra “show all” choice" },
       { dropdown: "Off: for this parameter the card is a silent socket and takes its choices from the knob sharing the key.",
-        multiple: "The value becomes a list: comma-joined in $name$ ($name:json$ for a Jinja list), a real list when applied to a field such as areas.",
+        multiple: "The value becomes a list: comma-joined in $name$ ($name:json$ for a Jinja list), a real list when applied to a field such as areas. Inside a list in the wrapped card — entities: [calendar.$name:slug$] — the element fans out to one entry per chosen value.",
         only: "Leave empty to offer every one Home Assistant knows; pick some to offer only those.",
         choices_source: "Typed in, or read live from an entity attribute (a dictionary contributes its keys, a list its entries).",
         all_label: "Optional first choice that clears the value, e.g. “All lines”." },

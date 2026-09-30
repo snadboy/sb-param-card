@@ -152,3 +152,18 @@ A link or a `navigate` action to `/dashboard/view?seb-line=BNSF` lands on a view
 HACS → custom repositories → `snadboy/sb-param-card`, category **Dashboard**.
 
 MIT licensed.
+
+
+### Multiple choices inside a list
+
+With **Allow several choices** on, a placeholder used as an element of a list in the wrapped card fans out to one element per chosen value:
+
+```yaml
+card:
+  type: calendar
+  entities:
+    - calendar.$dt:slug$      # Holiday + Workday → calendar.holiday, calendar.workday
+  title: $dt$                # → "Holiday,Workday"
+```
+
+Nothing chosen drops the element; `$dt:json$` keeps the whole list as JSON.
